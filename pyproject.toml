@@ -18,10 +18,10 @@ libb-util = { git = "https://github.com/bissli/libb-util.git", rev = "master" }
 "web.py" = { version = "^0.62", optional = true }
 
 # == test
-asserts = { version = "^0.12.0", optional = true }
-pytest = { version = "^8.0.0", optional = true }
-pytest-mock = { version = "^3.12.0", optional = true }
-pytest-runner = { version = "^6.0.1", optional = true }
+asserts = { version = "*", optional = true }
+pytest = { version = "*", optional = true }
+pytest-mock = { version = "*", optional = true }
+pytest-runner = { version = "*", optional = true }
 pdbpp = { git = "https://github.com/pdbpp/pdbpp.git", rev = "master", optional = true }
 
 [tool.poetry.extras]
