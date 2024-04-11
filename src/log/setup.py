@@ -269,7 +269,7 @@ def class_logger(cls, enable=False):
     _logged_classes.add(cls)
 
 
-def configure_logging(setup='', app='', app_args=None, level=None):
+def configure_logging(setup=None, app=None, app_args=None, level=None):
     """Configure console and file logging for any app"""
 
     if app_args is None:
@@ -297,9 +297,9 @@ def configure_logging(setup='', app='', app_args=None, level=None):
         merge_dict(logconfig, CMD_CONF)
 
     file_fmt = {
-        'app': app,
+        'app': app or '',
         'app_args': ' '.join(app_args),
-        'setup': setup,
+        'setup': setup or '',
         'date': datetime.datetime.now().strftime('%Y%m%d'),
         'time': datetime.datetime.now().strftime('%H%M%S'),
         }
