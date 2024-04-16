@@ -16,6 +16,7 @@ libb-util = { git = "https://github.com/bissli/libb-util.git", rev = "master" }
 
 # == referenced
 "web.py" = { version = "^0.62", optional = true }
+bobo = { version = "*", optional = true }
 
 # == test
 asserts = { version = "*", optional = true }

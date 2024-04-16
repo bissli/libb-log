@@ -112,12 +112,20 @@ LOG_CONF = {
             'interval': 1,
             'backupCount': 3,
             },
+        'sns': {
+            'level': 'INFO',
+            'class': 'log.handlers.SNSHandler',
+            'formatter': 'job_fmt',
+            'filters': JOB_FILTERS,
+            'topic_arn': os.getenv('CONFIG_SNSLOG_TOPIC_ARN'),
+            },
         },
     }
 
 WEB_HANDLERS = ['web_file']
 JOB_HANDLERS = ['job_file']
-TWD_HANDLERS = []
+TWD_HANDLERS = ['sns']
+SNS_HANDLERS = []
 
 if MAILCHIMP_ENABLED and os.getenv('CONFIG_MANDRILL_APIKEY'):
     # named handlers
@@ -200,6 +208,8 @@ if os.getenv('CONFIG_TLSSYSLOG_HOST') and os.getenv('CONFIG_TLSSYSLOG_PORT'):
             'filters': WEB_FILTERS,
         },
     })
+if os.getenv('CONFIG_SNSLOG_TOPIC_ARN') and os.getenv('CONFIG_SNSLOG_TOPIC_ARN'):
+    pass
 
 
 CMD_CONF = {
@@ -234,6 +244,18 @@ TWD_CONF = {
         },
     },
 }
+
+
+SNS_CONF = {
+    'loggers': {
+        'sns': {
+            'handlers': SNS_HANDLERS,
+            'level': 'INFO',
+            'propagate': True,
+        },
+    },
+}
+
 
 JOB_CONF = {
     'loggers': {
