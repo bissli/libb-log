@@ -30,6 +30,8 @@ with suppress(ImportError):
     from twisted.internet.ssl import SSL, ClientContextFactory
     from twisted.mail.smtp import ESMTPSenderFactory
 
+with suppress(ImportError):
+    import boto.sns
 
 __all__ = [
     'BufferedColoredSMTPHandler',
@@ -42,6 +44,7 @@ __all__ = [
     'ScreenshotColoredSMTPHandler',
     'TwistedSMTPHandler',
     'URLHandler',
+    'SNSHandler',
     ]
 
 
@@ -417,6 +420,32 @@ class URLHandler(HTTPHandler):
             raise
         except:
             self.handleError(record)
+
+
+class SNSHandler(ColoredHandler, logging.Handler):
+    """Boto SNS Handler (TODO: improve with ColoredHandler calls)
+    """
+
+    def __init__(self, topic_arn, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            region_name = topic_arn.split(':')[3]
+            self.sns_connection = boto.sns.connect_to_region(region_name)
+            self.topic_arn = topic_arn
+        except:
+            # see CONFIG_SNSLOG_TOPIC_ARN
+            # check boto installed
+            pass
+
+    def emit(self, record):
+        try:
+            subject = f'{record.name}:{record.levelname}'
+            self.sns_connection.publish(
+                self.topic_arn,
+                self.format(record),
+                subject=subject.encode('ascii', errors='ignore')[:99])
+        except (KeyboardInterrupt, SystemExit):
+            raise
 
 
 def _add_default_handler(logger):
