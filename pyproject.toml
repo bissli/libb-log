@@ -11,8 +11,9 @@ python = "~3.11"
 
 tls-syslog = "0.2.0"
 colorama = { version = "*", markers = "sys_platform == 'win32'" }
-libb-mail = { git = "https://github.com/bissli/libb-mail.git", rev = "master" }
-libb-util = { git = "https://github.com/bissli/libb-util.git", rev = "master" }
+
+libb-mail = { git = "https://github.com/bissli/libb-mail" }
+libb-util = { git = "https://github.com/bissli/libb-util" }
 
 # == referenced
 "web.py" = { version = "^0.62", optional = true }
@@ -23,7 +24,8 @@ asserts = { version = "*", optional = true }
 pytest = { version = "*", optional = true }
 pytest-mock = { version = "*", optional = true }
 pytest-runner = { version = "*", optional = true }
-pdbpp = { git = "https://github.com/pdbpp/pdbpp.git", rev = "master", optional = true }
+pdbpp = { git = "https://github.com/pdbpp/pdbpp.git", optional = true }
+docker = { version = "*", optional = true }
 
 [tool.poetry.extras]
 test = [
