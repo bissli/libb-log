@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "log", from = "src" }]
 
 [tool.poetry.dependencies]
-python = "~3.11"
+python = "^3.9"
 
 tls-syslog = "0.2.0"
 colorama = { version = "*", markers = "sys_platform == 'win32'" }
