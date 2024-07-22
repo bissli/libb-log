@@ -12,10 +12,8 @@ from logging.config import dictConfig
 
 from log.filters import *
 from log.handlers import *
-from log.loggers import *
-from log import config as config_log
-
 from libb import ismapping, merge_dict, scriptname, stream_is_tty
+from log import config as config_log
 from mail import config as config_mail
 
 with suppress(ImportError):
@@ -51,7 +49,7 @@ def patch_webdriver(this_logger, this_webdriver):
     - for sending webdriver-captured screenshots and errors
     """
     for h in this_logger.handlers:
-        if isinstance(h, (ScreenshotColoredSMTPHandler, ScreenshotColoredMandrillHandler)):
+        if isinstance(h, ScreenshotColoredSMTPHandler | ScreenshotColoredMandrillHandler):
             h.webdriver = this_webdriver
             this_logger.warning(f'Patching handler {repr(h)} {logging.getLevelName(h.level)}')
 
@@ -112,25 +110,19 @@ LOG_CONF = {
             'interval': 1,
             'backupCount': 3,
             },
-        'sns': {
-            'level': 'INFO',
-            'class': 'log.handlers.SNSHandler',
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-            'topic_arn': os.getenv('CONFIG_SNSLOG_TOPIC_ARN'),
-            },
         },
     }
 
 WEB_HANDLERS = ['web_file']
 JOB_HANDLERS = ['job_file']
-TWD_HANDLERS = ['sns']
-SNS_HANDLERS = []
+TWD_HANDLERS = []
+SRP_HANDLERS = []
 
 if MAILCHIMP_ENABLED and os.getenv('CONFIG_MANDRILL_APIKEY'):
     # named handlers
     WEB_HANDLERS.extend(['web_mail'])
     JOB_HANDLERS.extend(['job_mail'])
+    SRP_HANDLERS.extend(['job_mail'])
     # handler config
     LOG_CONF['handlers'].update({
         'job_mail': {
@@ -157,8 +149,9 @@ if MAILCHIMP_ENABLED and os.getenv('CONFIG_MANDRILL_APIKEY'):
 if os.getenv('CONFIG_SYSLOG_HOST') and os.getenv('CONFIG_SYSLOG_PORT'):
     # named handlers
     WEB_HANDLERS.extend(['web_sysl'])
-    JOB_HANDLERS.extend(['job_sysl'])
     TWD_HANDLERS.extend(['web_sysl'])
+    JOB_HANDLERS.extend(['job_sysl'])
+    SRP_HANDLERS.extend(['job_sysl'])
     # handler config
     LOG_CONF['handlers'].update({
         'job_sysl': {
@@ -179,8 +172,9 @@ if os.getenv('CONFIG_SYSLOG_HOST') and os.getenv('CONFIG_SYSLOG_PORT'):
 if os.getenv('CONFIG_TLSSYSLOG_HOST') and os.getenv('CONFIG_TLSSYSLOG_PORT'):
     # named handlers
     WEB_HANDLERS.extend(['web_tlssysl'])
-    JOB_HANDLERS.extend(['job_tlssysl'])
     TWD_HANDLERS.extend(['web_tlssysl'])
+    JOB_HANDLERS.extend(['job_tlssysl'])
+    SRP_HANDLERS.extend(['job_tlssysl'])
     # handler config
     LOG_CONF['handlers'].update({
         'job_tlssysl': {
@@ -224,6 +218,7 @@ CMD_CONF = {
 CMD_CONF['loggers']['job'] = CMD_CONF['loggers']['cmd']
 CMD_CONF['loggers']['twd'] = CMD_CONF['loggers']['cmd']
 CMD_CONF['loggers']['web'] = CMD_CONF['loggers']['cmd']
+CMD_CONF['loggers']['srp'] = CMD_CONF['loggers']['cmd']
 
 WEB_CONF = {
     'loggers': {
@@ -246,21 +241,20 @@ TWD_CONF = {
 }
 
 
-SNS_CONF = {
+JOB_CONF = {
     'loggers': {
-        'sns': {
-            'handlers': SNS_HANDLERS,
+        'job': {
+            'handlers': JOB_HANDLERS,
             'level': 'INFO',
             'propagate': True,
         },
     },
 }
 
-
-JOB_CONF = {
+SRP_CONF = {
     'loggers': {
-        'job': {
-            'handlers': JOB_HANDLERS,
+        'srp': {
+            'handlers': SRP_HANDLERS,
             'level': 'INFO',
             'propagate': True,
         },
@@ -272,6 +266,7 @@ for mod in (config_log.log.modules.extra or '').split(','):
     JOB_CONF['loggers'][mod] = JOB_CONF['loggers']['job']
     TWD_CONF['loggers'][mod] = TWD_CONF['loggers']['twd']
     WEB_CONF['loggers'][mod] = WEB_CONF['loggers']['web']
+    SRP_CONF['loggers'][mod] = SRP_CONF['loggers']['srp']
 
 
 _logged_classes = set()
@@ -314,6 +309,8 @@ def configure_logging(setup=None, app=None, app_args=None, level=None):
             merge_dict(logconfig, TWD_CONF)
         case 'web':
             merge_dict(logconfig, WEB_CONF)
+        case 'srp':
+            merge_dict(logconfig, SRP_CONF)
 
     if config_log.CHECKTTY and stream_is_tty(sys.stdout):
         merge_dict(logconfig, CMD_CONF)
