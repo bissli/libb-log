@@ -19,10 +19,10 @@ from functools import wraps
 from logging.handlers import HTTPHandler, SMTPHandler
 
 import mailchimp_transactional as MailchimpTransactional
-from log.colors import choose_color_ansi, choose_color_windows, set_color
-from log.filters import PreambleFilter
 
 from libb import stream_is_tty
+from log.colors import choose_color_ansi, choose_color_windows, set_color
+from log.filters import PreambleFilter
 
 with suppress(ImportError):
     from twisted.internet import reactor
@@ -247,8 +247,7 @@ class ScreenshotColoredSMTPHandler(ColoredSMTPHandler):
             text, html = self._format_record(record)
             url = self.webdriver.current_url
             lk = f'<div><a href="{url}">{url}</a></div>'
-            html = '<html><head></head><body>{}{}<img src="cid:{}"/></body></html>'\
-            .format(html, lk, name)
+            html = f'<html><head></head><body>{html}{lk}<img src="cid:{name}"/></body></html>'
             msg.attach(MIMEText(text, 'text'))
             msg.attach(MIMEText(html, 'html'))
             img = MIMEBase('image', 'png')
@@ -373,8 +372,7 @@ class ScreenshotColoredMandrillHandler(ColoredMandrillHandler):
             text, html = self._format_record(record)
             url = self.webdriver.current_url
             lk = f'<div><a href="{url}">{url}</a></div>'
-            html = '<html><head></head><body>{}{}<img src="cid:{}"/></body></html>'\
-            .format(html, lk, name)
+            html = f'<html><head></head><body>{html}{lk}<img src="cid:{name}"/></body></html>'
             img = {
                 'content': self.webdriver.get_screenshot_as_base64(),
                 'name': name,
