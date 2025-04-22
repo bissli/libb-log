@@ -312,7 +312,7 @@ def configure_logging(setup=None, app=None, app_args=None, level=None):
         case 'srp':
             merge_dict(logconfig, SRP_CONF)
 
-    if config_log.CHECKTTY and stream_is_tty(sys.stdout):
+    if config_log.CHECKTTY and stream_is_tty(sys.stdout) and setup != 'cmd':
         merge_dict(logconfig, CMD_CONF)
 
     file_fmt = {
