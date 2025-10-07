@@ -286,8 +286,16 @@ def class_logger(cls, enable=False):
     _logged_classes.add(cls)
 
 
-def configure_logging(setup=None, app=None, app_args=None, level=None):
-    """Configure console and file logging for any app"""
+def configure_logging(setup=None, app=None, app_args=None, level=None, extra_handlers=None):
+    """Configure console and file logging for any app.
+
+    Args:
+        setup: Setup type ('cmd', 'job', 'web', 'twd', 'srp')
+        app: Application name (defaults to script name)
+        app_args: Application arguments
+        level: Logging level override
+        extra_handlers: Dict of handler_name -> handler_config for custom handlers
+    """
 
     if app_args is None:
         app_args = []
@@ -315,6 +323,9 @@ def configure_logging(setup=None, app=None, app_args=None, level=None):
     if config_log.CHECKTTY and stream_is_tty(sys.stdout) and setup != 'cmd':
         merge_dict(logconfig, CMD_CONF)
 
+    if extra_handlers:
+        _add_extra_handlers(logconfig, setup, extra_handlers)
+
     file_fmt = {
         'app': app or '',
         'app_args': ' '.join(app_args),
@@ -333,6 +344,78 @@ def configure_logging(setup=None, app=None, app_args=None, level=None):
     file_formatter(logconfig)
 
     dictConfig(logconfig)
+
+
+def _add_extra_handlers(logconfig, setup, extra_handlers):
+    """Add custom handlers to all loggers in the configuration.
+
+    Args:
+        logconfig: Logging configuration dictionary
+        setup: Setup type ('cmd', 'job', 'web', 'twd', 'srp')
+        extra_handlers: Dict of handler_name -> handler_config
+    """
+    defaults = _get_handler_defaults(setup)
+
+    if not defaults['logger_name']:
+        return
+
+    for handler_name, handler_config in extra_handlers.items():
+        config = dict(handler_config)
+
+        if 'formatter' not in config and defaults['formatter']:
+            config['formatter'] = defaults['formatter']
+
+        if 'filters' not in config and defaults['filters']:
+            config['filters'] = list(defaults['filters'])
+
+        logconfig['handlers'][handler_name] = config
+
+        for logger_config in logconfig.get('loggers', {}).values():
+            if 'handlers' in logger_config:
+                logger_config['handlers'].append(handler_name)
+
+
+def _get_handler_defaults(setup):
+    """Get default formatter, filters, and logger name for a setup type.
+
+    Args:
+        setup: Setup type ('cmd', 'job', 'web', 'twd', 'srp')
+
+    Returns
+        Dict with 'formatter', 'filters', and 'logger_name' keys
+    """
+    defaults_map = {
+        'web': {
+            'formatter': 'web_fmt',
+            'filters': WEB_FILTERS,
+            'logger_name': 'web',
+        },
+        'job': {
+            'formatter': 'job_fmt',
+            'filters': JOB_FILTERS,
+            'logger_name': 'job',
+        },
+        'twd': {
+            'formatter': 'twd_fmt',
+            'filters': JOB_FILTERS,
+            'logger_name': 'twd',
+        },
+        'srp': {
+            'formatter': 'job_fmt',
+            'filters': JOB_FILTERS,
+            'logger_name': 'srp',
+        },
+        'cmd': {
+            'formatter': 'job_fmt',
+            'filters': ['machine'],
+            'logger_name': 'cmd',
+        },
+    }
+    return defaults_map.get(setup, {
+        'formatter': None,
+        'filters': None,
+        'logger_name': None,
+    })
 
 
 def log_exception(logger):
