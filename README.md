@@ -237,6 +237,60 @@ async def main():
 asyncio.run(main())
 ```
 
+## Custom Handlers
+
+You can add custom handlers (like CloudWatch, Datadog, etc.) directly in the `configure_logging` call:
+
+```python
+import os
+import watchtower
+from log import configure_logging
+import logging
+
+os.environ['CONFIG_LOG_MODULES_EXTRA'] = 'myapp'
+
+configure_logging(
+    setup='web',
+    extra_handlers={
+        'cloudwatch': {
+            'class': 'watchtower.CloudWatchLogHandler',
+            'log_group': 'myapp',
+            'stream_name': 'production',
+            'use_queues': True,
+            'level': 'INFO',
+            # formatter and filters are auto-applied based on setup type
+        }
+    }
+)
+
+logger = logging.getLogger(__name__)
+logger.info('Logs to CloudWatch and all other configured handlers')
+```
+
+The handler is automatically configured with appropriate formatters and filters for your setup type ('web', 'job', etc.). You can override these by explicitly specifying `'formatter'` and `'filters'` in the handler config.
+
+Multiple custom handlers can be added at once:
+
+```python
+configure_logging(
+    setup='job',
+    extra_handlers={
+        'cloudwatch': {
+            'class': 'watchtower.CloudWatchLogHandler',
+            'log_group': 'jobs',
+            'stream_name': 'worker-01',
+            'use_queues': True,
+            'level': 'INFO',
+        },
+        'datadog': {
+            'class': 'datadog.handler.DatadogLogHandler',
+            'api_key': os.getenv('DATADOG_API_KEY'),
+            'level': 'WARNING',
+        }
+    }
+)
+```
+
 ## Advanced Usage
 
 ### Class-based Logging
