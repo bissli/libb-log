@@ -12,7 +12,7 @@ from logging.config import dictConfig
 
 from log.filters import *
 from log.handlers import *
-from libb import ismapping, merge_dict, scriptname, stream_is_tty
+from libb import ismapping, merge_dict, scriptname
 from log import config as config_log
 from mail import config as config_mail
 
@@ -118,92 +118,87 @@ JOB_HANDLERS = ['job_file']
 TWD_HANDLERS = []
 SRP_HANDLERS = []
 
-if MAILCHIMP_ENABLED and os.getenv('CONFIG_MANDRILL_APIKEY'):
-    # named handlers
-    WEB_HANDLERS.extend(['web_mail'])
-    JOB_HANDLERS.extend(['job_mail'])
-    SRP_HANDLERS.extend(['job_mail'])
-    # handler config
-    LOG_CONF['handlers'].update({
-        'job_mail': {
-            'level': 'ERROR',
-            'class': 'log.handlers.ColoredMandrillHandler',
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-            'apikey': config_mail.mandrill.apikey,
-            'fromaddr': config_mail.mail.fromemail,
-            'toaddrs': config_mail.mail.toemail,
-            'subject': '%(machine)s %(name)s %(levelname)s',
-        },
-        'web_mail': {
-            'level': 'ERROR',
-            'class': 'log.handlers.ColoredMandrillHandler',
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-            'apikey': config_mail.mandrill.apikey,
-            'fromaddr': config_mail.mail.fromemail,
-            'toaddrs': config_mail.mail.toemail,
-            'subject': '%(machine)s %(name)s %(levelname)s',
-        },
-    })
-if os.getenv('CONFIG_SYSLOG_HOST') and os.getenv('CONFIG_SYSLOG_PORT'):
-    # named handlers
-    WEB_HANDLERS.extend(['web_sysl'])
-    TWD_HANDLERS.extend(['web_sysl'])
-    JOB_HANDLERS.extend(['job_sysl'])
-    SRP_HANDLERS.extend(['job_sysl'])
-    # handler config
-    LOG_CONF['handlers'].update({
-        'job_sysl': {
-            'level': 'INFO',
-            'class': 'logging.handlers.SysLogHandler',
-            'address': (config_log.syslog.host, config_log.syslog.port),
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-        },
-        'web_sysl': {
-            'level': 'INFO',
-            'class': 'logging.handlers.SysLogHandler',
-            'address': (config_log.syslog.host, config_log.syslog.port),
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-        },
-    })
-if os.getenv('CONFIG_TLSSYSLOG_HOST') and os.getenv('CONFIG_TLSSYSLOG_PORT'):
-    # named handlers
-    WEB_HANDLERS.extend(['web_tlssysl'])
-    TWD_HANDLERS.extend(['web_tlssysl'])
-    JOB_HANDLERS.extend(['job_tlssysl'])
-    SRP_HANDLERS.extend(['job_tlssysl'])
-    # handler config
-    LOG_CONF['handlers'].update({
-        'job_tlssysl': {
-            'level': 'INFO',
-            'class': 'tlssyslog.handlers.TLSSysLogHandler',
-            'address': (config_log.tlssyslog.host, config_log.tlssyslog.port),
-            'ssl_kwargs': {
-                'cert_reqs': ssl.CERT_REQUIRED,
-                'ssl_version': ssl.PROTOCOL_TLS,
-                'ca_certs': config_log.tslsyslog.dir
-                },
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-        },
-        'web_tlssysl': {
-            'level': 'INFO',
-            'class': 'tlssyslog.handlers.TLSSysLogHandler',
-            'address': (config_log.tlssyslog.host, config_log.tlssyslog.port),
-            'ssl_kwargs': {
-                'cert_reqs': ssl.CERT_REQUIRED,
-                'ssl_version': ssl.PROTOCOL_TLS,
-                'ca_certs': config_log.tslsyslog.dir
-                },
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-        },
-    })
-if os.getenv('CONFIG_SNSLOG_TOPIC_ARN') and os.getenv('CONFIG_SNSLOG_TOPIC_ARN'):
-    pass
+if not config_log.CHECKTTY:
+    if MAILCHIMP_ENABLED and os.getenv('CONFIG_MANDRILL_APIKEY'):
+        WEB_HANDLERS.extend(['web_mail'])
+        JOB_HANDLERS.extend(['job_mail'])
+        SRP_HANDLERS.extend(['job_mail'])
+        LOG_CONF['handlers'].update({
+            'job_mail': {
+                'level': 'ERROR',
+                'class': 'log.handlers.ColoredMandrillHandler',
+                'formatter': 'job_fmt',
+                'filters': JOB_FILTERS,
+                'apikey': config_mail.mandrill.apikey,
+                'fromaddr': config_mail.mail.fromemail,
+                'toaddrs': config_mail.mail.toemail,
+                'subject': '%(machine)s %(name)s %(levelname)s',
+            },
+            'web_mail': {
+                'level': 'ERROR',
+                'class': 'log.handlers.ColoredMandrillHandler',
+                'formatter': 'web_fmt',
+                'filters': WEB_FILTERS,
+                'apikey': config_mail.mandrill.apikey,
+                'fromaddr': config_mail.mail.fromemail,
+                'toaddrs': config_mail.mail.toemail,
+                'subject': '%(machine)s %(name)s %(levelname)s',
+            },
+        })
+    if os.getenv('CONFIG_SYSLOG_HOST') and os.getenv('CONFIG_SYSLOG_PORT'):
+        WEB_HANDLERS.extend(['web_sysl'])
+        TWD_HANDLERS.extend(['web_sysl'])
+        JOB_HANDLERS.extend(['job_sysl'])
+        SRP_HANDLERS.extend(['job_sysl'])
+        LOG_CONF['handlers'].update({
+            'job_sysl': {
+                'level': 'INFO',
+                'class': 'logging.handlers.SysLogHandler',
+                'address': (config_log.syslog.host, config_log.syslog.port),
+                'formatter': 'job_fmt',
+                'filters': JOB_FILTERS,
+            },
+            'web_sysl': {
+                'level': 'INFO',
+                'class': 'logging.handlers.SysLogHandler',
+                'address': (config_log.syslog.host, config_log.syslog.port),
+                'formatter': 'web_fmt',
+                'filters': WEB_FILTERS,
+            },
+        })
+    if os.getenv('CONFIG_TLSSYSLOG_HOST') and os.getenv('CONFIG_TLSSYSLOG_PORT'):
+        WEB_HANDLERS.extend(['web_tlssysl'])
+        TWD_HANDLERS.extend(['web_tlssysl'])
+        JOB_HANDLERS.extend(['job_tlssysl'])
+        SRP_HANDLERS.extend(['job_tlssysl'])
+        LOG_CONF['handlers'].update({
+            'job_tlssysl': {
+                'level': 'INFO',
+                'class': 'tlssyslog.handlers.TLSSysLogHandler',
+                'address': (config_log.tlssyslog.host, config_log.tlssyslog.port),
+                'ssl_kwargs': {
+                    'cert_reqs': ssl.CERT_REQUIRED,
+                    'ssl_version': ssl.PROTOCOL_TLS,
+                    'ca_certs': config_log.tslsyslog.dir
+                    },
+                'formatter': 'job_fmt',
+                'filters': JOB_FILTERS,
+            },
+            'web_tlssysl': {
+                'level': 'INFO',
+                'class': 'tlssyslog.handlers.TLSSysLogHandler',
+                'address': (config_log.tlssyslog.host, config_log.tlssyslog.port),
+                'ssl_kwargs': {
+                    'cert_reqs': ssl.CERT_REQUIRED,
+                    'ssl_version': ssl.PROTOCOL_TLS,
+                    'ca_certs': config_log.tslsyslog.dir
+                    },
+                'formatter': 'web_fmt',
+                'filters': WEB_FILTERS,
+            },
+        })
+    if os.getenv('CONFIG_SNSLOG_TOPIC_ARN') and os.getenv('CONFIG_SNSLOG_TOPIC_ARN'):
+        pass
 
 
 CMD_CONF = {
@@ -320,7 +315,7 @@ def configure_logging(setup=None, app=None, app_args=None, level=None, extra_han
         case 'srp':
             merge_dict(logconfig, SRP_CONF)
 
-    if config_log.CHECKTTY and stream_is_tty(sys.stdout) and setup != 'cmd':
+    if config_log.CHECKTTY and setup != 'cmd':
         merge_dict(logconfig, CMD_CONF)
 
     if extra_handlers:

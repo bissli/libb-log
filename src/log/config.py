@@ -2,13 +2,13 @@ import os
 import tempfile
 from pathlib import Path
 
-from libb import Setting, expandabspath
+from libb import Setting, expandabspath, is_tty
 
 Setting.unlock()  # temp
 
 # Environment
-HERE = os.path.abspath(os.path.dirname(__file__))
-CHECKTTY = 'CONFIG_CHECKTTY' in os.environ
+HERE = Path(Path(__file__).parent).resolve()
+CHECKTTY = is_tty()
 
 # Tmpdir
 tmpdir = Setting()
