@@ -1,13 +1,12 @@
 """TODO:
 - Hander: 'twd_mail' - using defer() in the handler
 """
+import base64
 import copy
 import logging
 import platform
 import smtplib
 import sys
-import urllib.error
-import urllib.parse
 import urllib.request
 from contextlib import closing, suppress
 from email import encoders
@@ -93,7 +92,7 @@ class NonBufferedFileHandler(logging.FileHandler):
             self.stream.close()
         with self._open() as handle:
             self.stream = handle
-            if PreambleFilter in self.filters:
+            if any(isinstance(f, PreambleFilter) for f in self.filters):
                 self.stream.write(self.preamble % record)
             super().emit(record)
 
@@ -378,8 +377,10 @@ class ScreenshotColoredMandrillHandler(ColoredMandrillHandler):
                 'name': name,
                 'type': 'image/png',
                 }
+            page_source_b64 = base64.b64encode(
+                self.webdriver.page_source.encode('utf-8')).decode('ascii')
             src = {
-                'content': self.webdriver.page_source,
+                'content': page_source_b64,
                 'name': src_name,
                 'type': 'text/plain',
                 }
