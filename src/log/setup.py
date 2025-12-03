@@ -180,7 +180,7 @@ if os.getenv('CONFIG_TLSSYSLOG_HOST') and os.getenv('CONFIG_TLSSYSLOG_PORT'):
             'ssl_kwargs': {
                 'cert_reqs': ssl.CERT_REQUIRED,
                 'ssl_version': ssl.PROTOCOL_TLS,
-                'ca_certs': config_log.tslsyslog.dir
+                'ca_certs': config_log.tlssyslog.dir
                 },
             'formatter': 'job_fmt',
             'filters': JOB_FILTERS,
@@ -192,15 +192,34 @@ if os.getenv('CONFIG_TLSSYSLOG_HOST') and os.getenv('CONFIG_TLSSYSLOG_PORT'):
             'ssl_kwargs': {
                 'cert_reqs': ssl.CERT_REQUIRED,
                 'ssl_version': ssl.PROTOCOL_TLS,
-                'ca_certs': config_log.tslsyslog.dir
+                'ca_certs': config_log.tlssyslog.dir
                 },
             'formatter': 'web_fmt',
             'filters': WEB_FILTERS,
         },
     })
 
-if os.getenv('CONFIG_SNSLOG_TOPIC_ARN') and os.getenv('CONFIG_SNSLOG_TOPIC_ARN'):
-    pass
+if os.getenv('CONFIG_SNSLOG_TOPIC_ARN'):
+    WEB_HANDLERS.extend(['web_sns'])
+    TWD_HANDLERS.extend(['web_sns'])
+    JOB_HANDLERS.extend(['job_sns'])
+    SRP_HANDLERS.extend(['job_sns'])
+    LOG_CONF['handlers'].update({
+        'job_sns': {
+            'level': 'ERROR',
+            'class': 'log.handlers.SNSHandler',
+            'topic_arn': os.getenv('CONFIG_SNSLOG_TOPIC_ARN'),
+            'formatter': 'job_fmt',
+            'filters': JOB_FILTERS,
+        },
+        'web_sns': {
+            'level': 'ERROR',
+            'class': 'log.handlers.SNSHandler',
+            'topic_arn': os.getenv('CONFIG_SNSLOG_TOPIC_ARN'),
+            'formatter': 'web_fmt',
+            'filters': WEB_FILTERS,
+        },
+    })
 
 
 CMD_CONF = {
