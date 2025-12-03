@@ -17,8 +17,6 @@ from email.utils import formatdate
 from functools import wraps
 from logging.handlers import HTTPHandler, SMTPHandler
 
-import mailchimp_transactional as MailchimpTransactional
-
 from libb import stream_is_tty
 from log.colors import choose_color_ansi, choose_color_windows, set_color
 from log.filters import PreambleFilter
@@ -31,6 +29,9 @@ with suppress(ImportError):
 
 with suppress(ImportError):
     import boto.sns
+
+with suppress(ImportError):
+    import mailchimp_transactional as MailchimpTransactional
 
 __all__ = [
     'BufferedColoredSMTPHandler',
@@ -250,7 +251,8 @@ class ScreenshotColoredSMTPHandler(ColoredSMTPHandler):
             msg.attach(MIMEText(text, 'text'))
             msg.attach(MIMEText(html, 'html'))
             img = MIMEBase('image', 'png')
-            img.set_payload(self.webdriver.get_screenshot_as_base64())
+            img.set_payload(base64.b64decode(self.webdriver.get_screenshot_as_base64()))
+            encoders.encode_base64(img)
             img.add_header('Content-ID', name)
             img.add_header('Content-Disposition', 'attachment', filename=name)
             msg.attach(img)
@@ -331,7 +333,9 @@ class ColoredMandrillHandler(ColoredHandler, logging.Handler):
 
     def __init__(self, apikey, fromaddr, toaddrs, subject):
         logging.Handler.__init__(self)
-        self.api = MailchimpTransactional.Client(apikey)
+        self.api = None
+        if 'MailchimpTransactional' in globals():
+            self.api = MailchimpTransactional.Client(apikey)
         self.fromaddr = fromaddr
         if isinstance(toaddrs, str):
             toaddrs = [toaddrs]
@@ -339,6 +343,8 @@ class ColoredMandrillHandler(ColoredHandler, logging.Handler):
         self.subject = subject
 
     def emit(self, record):
+        if self.api is None:
+            return
         text, html = self._format_record(record)
         msg = {
             'from_email': self.fromaddr,
@@ -363,7 +369,7 @@ class ScreenshotColoredMandrillHandler(ColoredMandrillHandler):
         super().__init__(apikey, fromaddr, toaddrs, subject, **kw)
 
     def emit(self, record):
-        if self.webdriver is None:
+        if self.webdriver is None or self.api is None:
             return super().emit(record)
         name = 'screenshot.png'
         src_name = 'page_source.txt'
@@ -401,18 +407,15 @@ class ScreenshotColoredMandrillHandler(ColoredMandrillHandler):
 
 
 class URLHandler(HTTPHandler):
-    """HTTPHandler with HTTPS a SumoLogic headers
+    """HTTPHandler with HTTPS and SumoLogic headers
     """
 
-    def __init__(self, host, url, method):
-        super().__init__()
-        self.host = host
-        self.url = url
-        self.method = method
+    def __init__(self, host, url, method='POST'):
+        super().__init__(host, url, method=method)
 
     def emit(self, record):
         try:
-            data = self.format(record)
+            data = self.format(record).encode('utf-8')
             with closing(urllib.request.urlopen(self.host+self.url, data)) as req:
                 _ = req.read()
         except (KeyboardInterrupt, SystemExit):
@@ -427,16 +430,19 @@ class SNSHandler(ColoredHandler, logging.Handler):
 
     def __init__(self, topic_arn, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.sns_connection = None
+        self.topic_arn = topic_arn
         try:
             region_name = topic_arn.split(':')[3]
             self.sns_connection = boto.sns.connect_to_region(region_name)
-            self.topic_arn = topic_arn
         except:
             # see CONFIG_SNSLOG_TOPIC_ARN
             # check boto installed
             pass
 
     def emit(self, record):
+        if self.sns_connection is None:
+            return
         try:
             subject = f'{record.name}:{record.levelname}'
             self.sns_connection.publish(
@@ -445,6 +451,8 @@ class SNSHandler(ColoredHandler, logging.Handler):
                 subject=subject.encode('ascii', errors='ignore')[:99])
         except (KeyboardInterrupt, SystemExit):
             raise
+        except:
+            self.handleError(record)
 
 
 def _add_default_handler(logger):

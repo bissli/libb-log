@@ -21,12 +21,12 @@ Path(tmpdir.dir).mkdir(parents=True, exist_ok=True)
 # Syslog
 syslog = Setting()
 syslog.host = os.getenv('CONFIG_SYSLOG_HOST')
-syslog.port = os.getenv('CONFIG_SYSLOG_PORT')
+syslog.port = int(os.getenv('CONFIG_SYSLOG_PORT', 0)) or None
 
 # TLS Syslog
 tlssyslog = Setting()
 tlssyslog.host = os.getenv('CONFIG_TLSSYSLOG_HOST')
-tlssyslog.port = os.getenv('CONFIG_TLSSYSLOG_PORT')
+tlssyslog.port = int(os.getenv('CONFIG_TLSSYSLOG_PORT', 0)) or None
 tlssyslog.dir = None
 if os.getenv('CONFIG_TLSSYSLOG_DIR'):
     tlssyslog.dir = expandabspath(os.getenv('CONFIG_TLSSYSLOG_DIR'))
