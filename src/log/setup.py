@@ -1,6 +1,7 @@
 """Logging configuration and context
 """
 
+import copy
 import datetime
 import logging
 import os
@@ -75,9 +76,9 @@ LOG_CONF = {
             },
         'webserver': {
             '()': 'log.filters.WebServerFilter',
-            'ip_fn': lambda: web.ctx.get('ip'),
-            'user_fn': lambda: hasattr(web.ctx, 'session')
-            and web.ctx.session.get('user'),
+            'ip_fn': lambda: web.ctx.get('ip') if 'web' in globals() else '',
+            'user_fn': lambda: (hasattr(web.ctx, 'session')
+                                and web.ctx.session.get('user')) if 'web' in globals() else '',
             },
         'preamble': {
             '()': 'log.filters.PreambleFilter',
@@ -278,6 +279,8 @@ SRP_CONF = {
 }
 
 for mod in (config_log.log.modules.extra or '').split(','):
+    if not mod:
+        continue
     CMD_CONF['loggers'][mod] = CMD_CONF['loggers']['cmd']
     JOB_CONF['loggers'][mod] = JOB_CONF['loggers']['job']
     TWD_CONF['loggers'][mod] = TWD_CONF['loggers']['twd']
@@ -322,7 +325,7 @@ def configure_logging(setup=None, app=None, app_args=None, level=None, extra_han
     if level:
         set_level(level)
 
-    logconfig = LOG_CONF
+    logconfig = copy.deepcopy(LOG_CONF)
 
     match setup:
         case 'cmd':
