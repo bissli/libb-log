@@ -239,7 +239,7 @@ class ScreenshotColoredSMTPHandler(ColoredSMTPHandler):
 
     def emit(self, record):
         if self.webdriver is None:
-            return
+            return super().emit(record)
         name = 'screenshot.png'
         src_name = 'page_source.txt'
         try:
@@ -365,7 +365,7 @@ class ScreenshotColoredMandrillHandler(ColoredMandrillHandler):
 
     def emit(self, record):
         if self.webdriver is None:
-            return
+            return super().emit(record)
         name = 'screenshot.png'
         src_name = 'page_source.txt'
         try:
