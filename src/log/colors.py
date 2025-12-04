@@ -3,6 +3,8 @@
 import platform
 import sys
 from contextlib import contextmanager
+from typing import TextIO
+from collections.abc import Generator
 
 #
 # use colorama wrappers around python stdlib ctypes on Windows
@@ -28,23 +30,12 @@ for k, v in list(Fore.items()):
 Back = {k: v << 4 for k, v in Fore.items()}
 
 
-#
-# windows color api constants
-#
-FOREGROUND_BLUE = 0x0001   # text color blue
-FOREGROUND_GREEN = 0x0002   # text color green
-FOREGROUND_RED = 0x0004   # text color red
-FOREGROUND_INTENSITY = 0x0008   # text intensified
-FOREGROUND_WHITE = FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_RED
-
-
 # winbase.h
 STD_INPUT_HANDLE = -10
 STD_OUTPUT_HANDLE = -11
 STD_ERROR_HANDLE = -12
 
-
-# wincon.h
+# wincon.h - foreground colors
 FOREGROUND_BLACK = 0x0000
 FOREGROUND_BLUE = 0x0001
 FOREGROUND_GREEN = 0x0002
@@ -53,8 +44,10 @@ FOREGROUND_RED = 0x0004
 FOREGROUND_MAGENTA = 0x0005
 FOREGROUND_YELLOW = 0x0006
 FOREGROUND_GREY = 0x0007
-FOREGROUND_INTENSITY = 0x0008   # foreground intensified
+FOREGROUND_INTENSITY = 0x0008
+FOREGROUND_WHITE = FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_RED
 
+# wincon.h - background colors
 BACKGROUND_BLACK = 0x0000
 BACKGROUND_BLUE = 0x0010
 BACKGROUND_GREEN = 0x0020
@@ -63,7 +56,7 @@ BACKGROUND_RED = 0x0040
 BACKGROUND_MAGENTA = 0x0050
 BACKGROUND_YELLOW = 0x0060
 BACKGROUND_GREY = 0x0070
-BACKGROUND_INTENSITY = 0x0080   # background intensified
+BACKGROUND_INTENSITY = 0x0080
 
 
 #
@@ -77,7 +70,9 @@ ANSI_NORMAL = '\x1b[0m'
 ANSI_CLEAR = '\x1b[m'
 
 
-def choose_color_windows(levelno):
+def choose_color_windows(levelno: int) -> int:
+    """Choose Windows console color attribute based on log level.
+    """
     if levelno >= 50:
         color = BACKGROUND_YELLOW | FOREGROUND_RED | FOREGROUND_INTENSITY | BACKGROUND_INTENSITY
     elif levelno >= 40:
@@ -93,7 +88,9 @@ def choose_color_windows(levelno):
     return color
 
 
-def choose_color_ansi(levelno):
+def choose_color_ansi(levelno: int) -> str:
+    """Choose ANSI escape sequence based on log level.
+    """
     if levelno >= 50:
         color = ANSI_RED
     elif levelno >= 40:
@@ -110,8 +107,9 @@ def choose_color_ansi(levelno):
 
 
 @contextmanager
-def set_color(color, stream=sys.stdout):
-    """Set the color on the stream temporarily; only necessary on Windows"""
+def set_color(color: int | str, stream: TextIO = sys.stdout) -> Generator[None, None, None]:
+    """Set the color on the stream temporarily; only necessary on Windows.
+    """
     if 'Win' in platform.system():
         handle = NT_CONSOLE_HANDLE[stream.fileno()]
         default = GetConsoleScreenBufferInfo(handle).wAttributes
@@ -124,15 +122,13 @@ def set_color(color, stream=sys.stdout):
         try:
             stream.write(color)
             yield
-        except:
-            stream.write(ANSI_CLEAR)
-            raise
         finally:
             stream.write(ANSI_CLEAR)
 
 
-def write_color(color, message, stream=sys.stdout):
-    """Just a clean DRY way to write stream and the close"""
+def write_color(color: int | str, message: str, stream: TextIO = sys.stdout) -> None:
+    """Write colored message to stream.
+    """
     with set_color(color, stream):
         stream.write(message)
 

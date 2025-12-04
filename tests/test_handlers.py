@@ -447,17 +447,17 @@ class TestSNSHandler:
         """Test emit calls sns publish with correct parameters."""
         handler = SNSHandler(topic_arn='arn:aws:sns:us-east-1:123456789:topic')
         handler.setFormatter(logging.Formatter('%(message)s'))
-        mock_conn = MagicMock()
-        handler.sns_connection = mock_conn
+        mock_client = MagicMock()
+        handler.sns_client = mock_client
         record = logging.LogRecord(
             name='mylogger', level=logging.ERROR, pathname='', lineno=0,
             msg='Test error', args=(), exc_info=None
         )
         handler.emit(record)
-        mock_conn.publish.assert_called_once()
-        args = mock_conn.publish.call_args[0]
-        assert args[0] == 'arn:aws:sns:us-east-1:123456789:topic'
-        assert 'Test error' in args[1]
+        mock_client.publish.assert_called_once()
+        kwargs = mock_client.publish.call_args[1]
+        assert kwargs['TopicArn'] == 'arn:aws:sns:us-east-1:123456789:topic'
+        assert 'Test error' in kwargs['Message']
 
 
 #
