@@ -1,8 +1,7 @@
 import os
-import tempfile
 from pathlib import Path
 
-from libb import Setting, expandabspath, is_tty
+from libb import Setting, expandabspath, get_tempdir, is_tty
 
 Setting.unlock()  # temp
 
@@ -11,12 +10,7 @@ HERE = Path(Path(__file__).parent).resolve()
 CHECKTTY = is_tty()
 
 # Tmpdir
-tmpdir = Setting()
-if os.getenv('CONFIG_TMPDIR_DIR'):
-    tmpdir.dir = expandabspath(os.getenv('CONFIG_TMPDIR_DIR'))
-else:
-    tmpdir.dir = tempfile.gettempdir()
-Path(tmpdir.dir).mkdir(parents=True, exist_ok=True)
+tmpdir = get_tempdir()
 
 # Syslog
 syslog = Setting()
