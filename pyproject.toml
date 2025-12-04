@@ -25,10 +25,12 @@ pytest = { version = "*", optional = true }
 pytest-mock = { version = "*", optional = true }
 pytest-runner = { version = "*", optional = true }
 docker = { version = "*", optional = true }
+wrapt = { version = "*", optional = true }
 
 [tool.poetry.extras]
 test = [
   "asserts",
+  "wrapt",
   "docker",
   "pytest",
   "pytest-mock",
