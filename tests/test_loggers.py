@@ -1,3 +1,4 @@
+import io
 import logging
 from unittest.mock import MagicMock
 
@@ -23,12 +24,6 @@ class TestStderrStreamLogger:
         mock_logger = MagicMock()
         stream_logger = StderrStreamLogger(mock_logger)
         assert stream_logger.level == logging.INFO
-
-    def test_init_empty_linebuf(self):
-        """Test __init__ sets empty linebuf."""
-        mock_logger = MagicMock()
-        stream_logger = StderrStreamLogger(mock_logger)
-        assert stream_logger.linebuf == ''
 
     def test_write_logs_single_line(self):
         """Test write logs a single line."""
@@ -82,11 +77,12 @@ class TestStderrStreamLogger:
         stream_logger = StderrStreamLogger(mock_logger)
         assert stream_logger.isatty() is False
 
-    def test_fileno_returns_none(self):
-        """Test fileno always returns None."""
+    def test_fileno_raises_unsupported_operation(self):
+        """Test fileno raises UnsupportedOperation as this is not a real file."""
         mock_logger = MagicMock()
         stream_logger = StderrStreamLogger(mock_logger)
-        assert stream_logger.fileno() is None
+        with pytest.raises(io.UnsupportedOperation):
+            stream_logger.fileno()
 
 
 class TestStderrStreamLoggerIntegration:

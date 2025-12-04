@@ -1,25 +1,32 @@
+import io
 import logging
 
 __all__ = ['StderrStreamLogger']
 
 
 class StderrStreamLogger:
-    """Patch over stderr to log print statements to INFO
-    placeholders isatty and fileno mimic python stream
+    """Patch over stderr to log print statements to INFO.
+
+    Placeholders isatty and fileno mimic python stream.
     stderr still accessible at stderr.__stderr__
     """
 
-    def __init__(self, logger):
+    def __init__(self, logger: logging.Logger) -> None:
         self.logger = logger
         self.level = logging.INFO
-        self.linebuf = ''
 
-    def write(self, buf):
+    def write(self, buf: str) -> None:
+        """Write buffer lines to logger.
+        """
         for line in buf.rstrip().splitlines():
             self.logger.log(self.level, line.rstrip())
 
-    def isatty(self):
+    def isatty(self) -> bool:
+        """Return False as this is not a TTY.
+        """
         return False
 
-    def fileno(self):
-        return None
+    def fileno(self) -> int:
+        """Raise UnsupportedOperation as this is not a real file.
+        """
+        raise io.UnsupportedOperation('fileno')

@@ -7,14 +7,16 @@ import logging
 import os
 import ssl
 import sys
+from collections.abc import Callable
 from contextlib import suppress
 from functools import wraps
 from logging.config import dictConfig
+from typing import Any
 
-from log.filters import *
-from log.handlers import *
 from libb import is_tty, ismapping, merge_dict, scriptname
 from log import config as config_log
+from log.handlers import ScreenshotColoredMandrillHandler
+from log.handlers import ScreenshotColoredSMTPHandler
 from mail import config as config_mail
 
 with suppress(ImportError):
@@ -35,8 +37,9 @@ __all__ = [
     ]
 
 
-def set_level(levelname):
-    """Simple utility for setting root logging via sqla"""
+def set_level(levelname: str) -> None:
+    """Simple utility for setting root logging level.
+    """
     level_names = {v: k for k, v in logging._levelToName.items()}
     level_names['WARN'] = level_names['WARNING']
     level = level_names[levelname.upper()]
@@ -45,9 +48,8 @@ def set_level(levelname):
     logging.root.setLevel(level)
 
 
-def patch_webdriver(this_logger, this_webdriver):
-    """Patch logger with SMTP/Mandrill handler
-    - for sending webdriver-captured screenshots and errors
+def patch_webdriver(this_logger: logging.Logger, this_webdriver: Any) -> None:
+    """Patch logger with SMTP/Mandrill handler for webdriver screenshots.
     """
     for h in this_logger.handlers:
         if isinstance(h, ScreenshotColoredSMTPHandler | ScreenshotColoredMandrillHandler):
@@ -291,8 +293,8 @@ for mod in (config_log.log.modules.extra or '').split(','):
 _logged_classes = set()
 
 
-def class_logger(cls, enable=False):
-    """Class logging, stolen from the bowels of sqlalchemy (TODO)
+def class_logger(cls: type, enable: bool | str = False) -> None:
+    """Add logger attribute to a class.
     """
     logger = logging.getLogger(cls.__module__ + '.' + cls.__name__)
     if enable == 'debug':
@@ -305,7 +307,9 @@ def class_logger(cls, enable=False):
     _logged_classes.add(cls)
 
 
-def configure_logging(setup=None, app=None, app_args=None, level=None, extra_handlers=None):
+def configure_logging(setup: str | None = None, app: str | None = None,
+                      app_args: list[str] | None = None, level: str | None = None,
+                      extra_handlers: dict[str, dict[str, Any]] | None = None) -> None:
     """Configure console and file logging for any app.
 
     Args:
@@ -315,7 +319,6 @@ def configure_logging(setup=None, app=None, app_args=None, level=None, extra_han
         level: Logging level override
         extra_handlers: Dict of handler_name -> handler_config for custom handlers
     """
-
     if app_args is None:
         app_args = []
     if not app:
@@ -353,7 +356,7 @@ def configure_logging(setup=None, app=None, app_args=None, level=None, extra_han
         'time': datetime.datetime.now().strftime('%H%M%S'),
         }
 
-    def file_formatter(thed, str_fmt=file_fmt):
+    def file_formatter(thed: dict[str, Any], str_fmt: dict[str, str] = file_fmt) -> None:
         for k, subd_or_file in thed.items():
             if ismapping(subd_or_file):
                 file_formatter(subd_or_file)
@@ -365,7 +368,8 @@ def configure_logging(setup=None, app=None, app_args=None, level=None, extra_han
     dictConfig(logconfig)
 
 
-def _add_extra_handlers(logconfig, setup, extra_handlers):
+def _add_extra_handlers(logconfig: dict[str, Any], setup: str | None,
+                        extra_handlers: dict[str, dict[str, Any]]) -> None:
     """Add custom handlers to all loggers in the configuration.
 
     Args:
@@ -394,7 +398,7 @@ def _add_extra_handlers(logconfig, setup, extra_handlers):
                 logger_config['handlers'].append(handler_name)
 
 
-def _get_handler_defaults(setup):
+def _get_handler_defaults(setup: str | None) -> dict[str, Any]:
     """Get default formatter, filters, and logger name for a setup type.
 
     Args:
@@ -408,40 +412,41 @@ def _get_handler_defaults(setup):
             'formatter': 'web_fmt',
             'filters': WEB_FILTERS,
             'logger_name': 'web',
-        },
+            },
         'job': {
             'formatter': 'job_fmt',
             'filters': JOB_FILTERS,
             'logger_name': 'job',
-        },
+            },
         'twd': {
             'formatter': 'twd_fmt',
             'filters': JOB_FILTERS,
             'logger_name': 'twd',
-        },
+            },
         'srp': {
             'formatter': 'job_fmt',
             'filters': JOB_FILTERS,
             'logger_name': 'srp',
-        },
+            },
         'cmd': {
             'formatter': 'job_fmt',
             'filters': ['machine'],
             'logger_name': 'cmd',
-        },
-    }
+            },
+        }
     return defaults_map.get(setup, {
         'formatter': None,
         'filters': None,
         'logger_name': None,
-    })
+        })
 
 
-def log_exception(logger):
-    """Return wrapped function fn in try except and log exception with logger"""
-    def wrapper(fn):
+def log_exception(logger: logging.Logger) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Decorator that logs exceptions and re-raises them.
+    """
+    def wrapper(fn: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(fn)
-        def wrapped_fn(*args, **kwargs):
+        def wrapped_fn(*args: Any, **kwargs: Any) -> Any:
             try:
                 return fn(*args, **kwargs)
             except Exception as exc:

@@ -1,5 +1,6 @@
 import logging
 import socket
+from collections.abc import Callable
 
 __all__ = [
     'MachineFilter',
@@ -9,18 +10,23 @@ __all__ = [
 
 
 class MachineFilter(logging.Filter):
-    """Simple filter by socket hostname
+    """Simple filter that adds socket hostname to records.
     """
-    def filter(self, record):
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Add machine hostname to record.
+        """
         record.machine = socket.gethostname()
         return True
 
 
 class PreambleFilter(logging.Filter):
-    """Write a preamble to a StreamHandler"""
+    """Filter that adds preamble metadata to records.
+    """
 
-    def __init__(self, app='', args='', setup='',
-                 statuses=('succeeded', 'failed'), failno=40):
+    def __init__(self, app: str = '', args: str = '', setup: str = '',
+                 statuses: tuple[str, str] = ('succeeded', 'failed'),
+                 failno: int = 40) -> None:
         self.cmd_app = app
         self.cmd_args = args
         self.cmd_setup = setup
@@ -28,7 +34,9 @@ class PreambleFilter(logging.Filter):
         self.cmd_status = self._success
         self.failno = failno
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Add preamble metadata to record.
+        """
         record.cmd_app = self.cmd_app
         record.cmd_args = self.cmd_args
         record.cmd_setup = self.cmd_setup
@@ -39,7 +47,7 @@ class PreambleFilter(logging.Filter):
 
 
 class WebServerFilter(logging.Filter):
-    """Create a logging.Filter with wsgi webserver context info
+    """Filter that adds wsgi webserver context info to records.
 
     >>> import web  # doctest: +SKIP
     >>> ip_fn = lambda: web.ctx.get('ip')  # doctest: +SKIP
@@ -52,11 +60,14 @@ class WebServerFilter(logging.Filter):
     >>> handler.addFilter(WebServerFilter(ip_fn, user_fn))  # doctest: +SKIP
     """
 
-    def __init__(self, ip_fn=lambda: '', user_fn=lambda: ''):
+    def __init__(self, ip_fn: Callable[[], str] = lambda: '',
+                 user_fn: Callable[[], str] = lambda: '') -> None:
         self.ip_fn = ip_fn
         self.user_fn = user_fn
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Add IP and user to record.
+        """
         ipaddr = self.ip_fn() or ''
         if not ipaddr:
             record.ip = ipaddr
