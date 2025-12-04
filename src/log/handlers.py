@@ -94,7 +94,9 @@ class NonBufferedFileHandler(logging.FileHandler):
         with self._open() as handle:
             self.stream = handle
             if any(isinstance(f, PreambleFilter) for f in self.filters):
-                self.stream.write(self.preamble % record)
+                if not hasattr(record, 'asctime'):
+                    record.asctime = self.formatter.formatTime(record) if self.formatter else logging.Formatter().formatTime(record)
+                self.stream.write(self.preamble % record.__dict__)
             super().emit(record)
 
 
