@@ -6,21 +6,38 @@ These replace the old logging.Handler subclasses with simpler callables.
 from __future__ import annotations
 
 import base64
+import logging
 import smtplib
 import urllib.request
-from contextlib import closing, suppress
+from contextlib import closing
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate
 from logging.handlers import SysLogHandler
+from typing import TYPE_CHECKING
 
-with suppress(ImportError):
+from loguru import logger as _loguru
+
+if TYPE_CHECKING:
+    from loguru import Message
+
+# Optional dependency flags
+HAS_BOTO3 = False
+HAS_MAILCHIMP = False
+
+try:
     import boto3
+    HAS_BOTO3 = True
+except ImportError:
+    pass
 
-with suppress(ImportError):
+try:
     import mailchimp_transactional as MailchimpTransactional
+    HAS_MAILCHIMP = True
+except ImportError:
+    pass
 
 __all__ = [
     'MandrillSink',
@@ -60,7 +77,7 @@ class MandrillSink:
         subject_template: str = '{extra[machine]} {name} {level.name}',
     ):
         self.api = None
-        if 'MailchimpTransactional' in globals():
+        if HAS_MAILCHIMP:
             self.api = MailchimpTransactional.Client(apikey)
         self.fromaddr = fromaddr
         if isinstance(toaddrs, str):
@@ -68,7 +85,7 @@ class MandrillSink:
         self.toaddrs = [{'email': email} for email in toaddrs]
         self.subject_template = subject_template
 
-    def __call__(self, message) -> None:
+    def __call__(self, message: Message) -> None:
         if self.api is None:
             return
         record = message.record
@@ -88,8 +105,8 @@ class MandrillSink:
         }
         try:
             self.api.messages.send({'message': msg})
-        except Exception:
-            pass  # Fail silently for logging
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'MandrillSink failed: {e}')
 
 
 class ScreenshotMandrillSink(MandrillSink):
@@ -106,7 +123,7 @@ class ScreenshotMandrillSink(MandrillSink):
         """Runtime webdriver patching."""
         self.webdriver = webdriver
 
-    def __call__(self, message) -> None:
+    def __call__(self, message: Message) -> None:
         if self.webdriver is None or self.api is None:
             return super().__call__(message)
 
@@ -144,8 +161,8 @@ class ScreenshotMandrillSink(MandrillSink):
                 'attachments': [src],
             }
             self.api.messages.send({'message': msg})
-        except Exception:
-            # Fall back to non-screenshot email
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'ScreenshotMandrillSink failed: {e}')
             super().__call__(message)
 
 
@@ -174,7 +191,7 @@ class SMTPSink:
         self.ssl = ssl
         self.starttls = starttls
 
-    def __call__(self, message) -> None:
+    def __call__(self, message: Message) -> None:
         record = message.record
         text = str(message)
         color = _choose_color_html(record['level'].name)
@@ -201,8 +218,8 @@ class SMTPSink:
                 smtp.login(self.username, self.password)
             smtp.sendmail(self.fromaddr, self.toaddrs, msg.as_string())
             smtp.quit()
-        except Exception:
-            pass
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'SMTPSink failed: {e}')
 
 
 class ScreenshotSMTPSink(SMTPSink):
@@ -216,7 +233,7 @@ class ScreenshotSMTPSink(SMTPSink):
         """Runtime webdriver patching."""
         self.webdriver = webdriver
 
-    def __call__(self, message) -> None:
+    def __call__(self, message: Message) -> None:
         if self.webdriver is None:
             return super().__call__(message)
 
@@ -265,7 +282,8 @@ class ScreenshotSMTPSink(SMTPSink):
                 smtp.login(self.username, self.password)
             smtp.sendmail(self.fromaddr, self.toaddrs, msg.as_string())
             smtp.quit()
-        except Exception:
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'ScreenshotSMTPSink failed: {e}')
             super().__call__(message)
 
 
@@ -275,14 +293,14 @@ class SNSSink:
     def __init__(self, topic_arn: str):
         self.topic_arn = topic_arn
         self.client = None
-        if 'boto3' in dir():
+        if HAS_BOTO3:
             try:
                 region = topic_arn.split(':')[3]
                 self.client = boto3.client('sns', region_name=region)
-            except Exception:
-                pass
+            except Exception as e:
+                _loguru.opt(depth=1).warning(f'SNSSink init failed: {e}')
 
-    def __call__(self, message) -> None:
+    def __call__(self, message: Message) -> None:
         if self.client is None:
             return
         record = message.record
@@ -293,8 +311,8 @@ class SNSSink:
                 Message=str(message),
                 Subject=subject,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'SNSSink failed: {e}')
 
 
 class SyslogSink:
@@ -303,8 +321,7 @@ class SyslogSink:
     def __init__(self, host: str, port: int = 514):
         self.handler = SysLogHandler(address=(host, port))
 
-    def __call__(self, message) -> None:
-        import logging
+    def __call__(self, message: Message) -> None:
         record = message.record
         level = getattr(logging, record['level'].name, logging.INFO)
         log_record = logging.LogRecord(
@@ -318,8 +335,8 @@ class SyslogSink:
         )
         try:
             self.handler.emit(log_record)
-        except Exception:
-            pass
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'SyslogSink failed: {e}')
 
 
 class TLSSyslogSink:
@@ -336,10 +353,9 @@ class TLSSyslogSink:
         except ImportError:
             pass
 
-    def __call__(self, message) -> None:
+    def __call__(self, message: Message) -> None:
         if self.handler is None:
             return
-        import logging
         record = message.record
         level = getattr(logging, record['level'].name, logging.INFO)
         log_record = logging.LogRecord(
@@ -353,8 +369,8 @@ class TLSSyslogSink:
         )
         try:
             self.handler.emit(log_record)
-        except Exception:
-            pass
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'TLSSyslogSink failed: {e}')
 
 
 class URLSink:
@@ -363,10 +379,10 @@ class URLSink:
     def __init__(self, url: str):
         self.url = url
 
-    def __call__(self, message) -> None:
+    def __call__(self, message: Message) -> None:
         try:
             data = str(message).encode('utf-8')
             with closing(urllib.request.urlopen(self.url, data)) as req:
                 _ = req.read()
-        except Exception:
-            pass
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'URLSink failed: {e}')
