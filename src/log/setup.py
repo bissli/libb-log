@@ -264,7 +264,7 @@ def _add_sinks(backend, config: LogConfig) -> None:
         retention = '3 days' if config.setup == SetupType.WEB else None
         backend.add_sink(
             filename,
-            level='INFO',
+            level='WARNING',
             format=fmt,
             rotation=rotation,
             retention=retention,
