@@ -1,48 +1,95 @@
 # Logging Library
 
-A flexible and extensible logging system with support for multiple output formats, colorization, and various handlers (console, file, syslog, email, etc.).
+A flexible logging library powered by loguru internally. Provides multiple output formats, colorization, and various sinks (console, file, syslog, email, AWS SNS). Uses standard `logging` module syntax.
 
 ## Features
 
-- Multiple preconfigured logging setups (command-line, job, web, twisted, etc.)
-- Colorized console output (cross-platform)
+- Standard `logging.getLogger()` and `logger.info()` syntax
+- Multiple preconfigured setups (cmd, job, web, twd, srp)
+- Colorized console output (DEBUG=purple, INFO=green, WARNING=yellow, ERROR/CRITICAL=red)
 - File logging with automatic rotation
 - Syslog integration (regular and TLS)
 - Email notifications (via SMTP or Mandrill API)
 - Screenshot capture for web applications
 - AWS SNS integration
-- Customizable filters and formatters
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-
-# Install the package
 pip install -e .
 ```
 
 ## Quick Start
 
-Basic setup for a command-line application:
+```python
+import logging
+import log
+
+# Configure logging for your setup type
+log.configure_logging('cmd')
+
+# Use standard logging
+logger = logging.getLogger('cmd')
+logger.debug('Debug message')
+logger.info('Info message')
+logger.warning('Warning message')
+logger.error('Error message')
+
+# Child loggers work too
+child = logging.getLogger('cmd.mymodule')
+child.info('Hello from mymodule')
+```
+
+## Setup Types
+
+| Setup | Description | Default Sinks |
+|-------|-------------|---------------|
+| `cmd` | Command-line applications | Console (DEBUG level) |
+| `job` | Background job processing | File, Mail, Syslog, SNS |
+| `web` | Web applications | File, Mail, Syslog, SNS |
+| `twd` | Twisted applications | Syslog, SNS |
+| `srp` | SRP applications | Mail, Syslog, SNS |
+
+## Configuration
 
 ```python
 import logging
-from log import configure_logging
-import os
+import log
 
-# Set environment variable to include your module
-os.environ['CONFIG_LOG_MODULES_EXTRA'] = 'myapp,myapp.submodule'
-# Or set in your shell before running the application
+# Basic configuration
+log.configure_logging('web', app='myapp')
 
-# Set up logging for a command-line application
-configure_logging(setup='cmd')
+# With level override
+log.configure_logging('job', level='DEBUG')
 
-# Get a module-specific logger (recommended approach)
-logger = logging.getLogger(__name__)
+# With web context for request tracking (framework-agnostic)
+log.configure_logging('web', web_context={
+    'ip_fn': lambda: request.remote_addr,
+    'user_fn': lambda: session.get('user', ''),
+})
 
-# Use standard logging methods
+# With extra handlers
+log.configure_logging('job', extra_handlers={
+    'cloudwatch': {
+        'class': 'watchtower.CloudWatchLogHandler',
+        'log_group': 'myapp',
+        'level': 'INFO',
+    }
+})
+
+logger = logging.getLogger('web')
+logger.info('Logging configured')
+```
+
+## Logging
+
+```python
+import logging
+import log
+
+log.configure_logging('cmd')
+logger = logging.getLogger('cmd')
+
 logger.debug('Debug message')
 logger.info('Info message')
 logger.warning('Warning message')
@@ -52,305 +99,151 @@ logger.critical('Critical message')
 # Log exceptions with traceback
 try:
     1 / 0
-except Exception as exc:
-    logger.exception(exc)
+except Exception:
+    logger.exception('Something went wrong')
 ```
 
-### Module-Specific Logging
-
-This library is designed to work with Python's standard module-specific loggers using `__name__`. To ensure your module loggers receive the proper configuration:
-
-1. Add your module names to the `CONFIG_LOG_MODULES_EXTRA` environment variable
-2. Use `logger = logging.getLogger(__name__)` in your modules
-3. All configured modules will receive the same handlers and settings as the main logger type
-
-This approach allows you to follow standard Python logging practices while benefiting from the library's handlers and formatting.
-
-## Logging Configurations
-
-The library provides several predefined logging configurations:
-
-- `cmd`: For command-line applications
-- `job`: For background job processing
-- `twd`: For Twisted applications
-- `web`: For web applications
-- `srp`: For SRP applications
-
-Example for web applications:
+## Utilities
 
 ```python
-import os
-from log import configure_logging
 import logging
+import log
 
-# Configure your modules to use the library's handlers
-os.environ['CONFIG_LOG_MODULES_EXTRA'] = 'myapp.views,myapp.models'
+log.configure_logging('cmd')
 
-configure_logging(setup='web')
-logger = logging.getLogger(__name__)  # Module-specific logger
+# Set logging level
+log.set_level('DEBUG')
+
+# Flush all sinks on shutdown
+log.complete()
+
+# Class decorator for adding logger attribute
+@log.class_logger
+class MyService:
+    def process(self):
+        self.logger.info('Processing...')
+
+# Exception logging decorator
+logger = logging.getLogger('cmd')
+
+@log.log_exception(logger)
+def risky_operation():
+    return 1 / 0  # Logs exception and re-raises
+
+# Stderr stream logger (captures print statements)
+import sys
+wwwlog = logging.getLogger('web.stdout')
+sys.stderr = log.StderrStreamLogger(wwwlog)
 ```
 
-## Logging with Web Frameworks
+## Web Framework Integration
+
+### web.py
+
+```python
+import logging
+import web
+
+import log
+from tc import config
+
+web_context = {
+    'ip_fn': lambda: web.ctx.get('ip', ''),
+    'user_fn': lambda: web.ctx.session.get('user', '') if hasattr(web.ctx, 'session') else '',
+}
+
+log.configure_logging('web', web_context=web_context)
+
+logger = logging.getLogger('web')
+logger.info('Application started')
+```
 
 ### Flask
 
 ```python
-import os
-from flask import Flask, request, session
-from log import configure_logging
-from log.filters import WebServerFilter
 import logging
+from flask import Flask, request, session
 
-# Add your modules to receive the same configuration as 'web' loggers
-os.environ['CONFIG_LOG_MODULES_EXTRA'] = 'myapp.views,myapp.models'
+import log
 
 app = Flask(__name__)
-configure_logging(setup='web')
 
-# Use module-specific logger
-logger = logging.getLogger(__name__)
+log.configure_logging('web', web_context={
+    'ip_fn': lambda: request.remote_addr,
+    'user_fn': lambda: session.get('user', ''),
+})
 
-# Add a web server filter to include IP and user info
-# Get the parent logger to add filters to all handlers
-web_logger = logging.getLogger('web')
-for handler in web_logger.handlers:
-    handler.addFilter(WebServerFilter(
-        ip_fn=lambda: request.remote_addr,
-        user_fn=lambda: session.get('user')
-    ))
+logger = logging.getLogger('web')
 
 @app.route('/')
 def index():
-    logger.info('Request received for index page')
+    logger.info('Request received')
     return 'Hello World'
 ```
 
-### Capturing Screenshots (Selenium)
+### Selenium Screenshots
 
 ```python
-import os
-from selenium import webdriver
-from log import configure_logging, patch_webdriver
 import logging
+from selenium import webdriver
 
-# Configure your modules
-os.environ['CONFIG_LOG_MODULES_EXTRA'] = 'myapp.selenium,myapp.tests'
+import log
 
-configure_logging(setup='job')
-# Use module-specific logger
-logger = logging.getLogger(__name__)
+log.configure_logging('job')
+logger = logging.getLogger('job')
 
-# For screenshot functionality, we need to patch the job logger
-# as that's where the handlers are configured
-job_logger = logging.getLogger('job')
 driver = webdriver.Chrome()
-# Patch the logger to capture screenshots on errors
-patch_webdriver(job_logger, driver)
+log.patch_webdriver(logger, driver)  # Captures screenshots on errors
 
 try:
     driver.get('https://example.com')
-    # Error will trigger screenshot capture and email
-    assert 'Expected Text' in driver.page_source
-except Exception as e:
-    logger.exception(e)
+    logger.error('This error will include a screenshot')
 finally:
     driver.quit()
 ```
 
-## Environment Variables Reference
+## Environment Variables
 
 ### Core Configuration
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CONFIG_CHECKTTY` | No | - | When present, enables TTY detection for console output |
-| `CONFIG_TMPDIR_DIR` | No | System temp dir | Directory for log files |
-| `CONFIG_LOG_MODULES_EXTRA` | No | - | Comma-separated list of additional modules to configure with the same logging settings (e.g., `myapp,myapp.models`) |
-| `CONFIG_LOG_MODULES_IGNORE` | No | - | Comma-separated list of modules to ignore in logging |
+| Variable | Description |
+|----------|-------------|
+| `CONFIG_TMPDIR_DIR` | Directory for log files (default: system temp) |
+| `CONFIG_LOG_MODULES_EXTRA` | Comma-separated modules to intercept |
 
-### Syslog Configuration
+### Syslog
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CONFIG_SYSLOG_HOST` | No | - | Syslog server hostname/IP |
-| `CONFIG_SYSLOG_PORT` | No | - | Syslog server port |
+| Variable | Description |
+|----------|-------------|
+| `CONFIG_SYSLOG_HOST` | Syslog server hostname |
+| `CONFIG_SYSLOG_PORT` | Syslog server port |
 
-### TLS Syslog Configuration
+### TLS Syslog
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CONFIG_TLSSYSLOG_HOST` | No | - | TLS Syslog server hostname/IP |
-| `CONFIG_TLSSYSLOG_PORT` | No | - | TLS Syslog server port |
-| `CONFIG_TLSSYSLOG_DIR` | No | - | Directory containing TLS certificates for syslog |
+| Variable | Description |
+|----------|-------------|
+| `CONFIG_TLSSYSLOG_HOST` | TLS Syslog server hostname |
+| `CONFIG_TLSSYSLOG_PORT` | TLS Syslog server port |
+| `CONFIG_TLSSYSLOG_DIR` | Directory containing TLS certificates |
 
-### Email Notification Configuration
+### Email Notifications
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CONFIG_MANDRILL_APIKEY` | No | - | Mandrill API key for sending email notifications |
+| Variable | Description |
+|----------|-------------|
+| `CONFIG_MANDRILL_APIKEY` | Mandrill API key for email notifications |
 
 ### AWS Integration
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CONFIG_SNSLOG_TOPIC_ARN` | No | - | AWS SNS Topic ARN for logging notifications |
+| Variable | Description |
+|----------|-------------|
+| `CONFIG_SNSLOG_TOPIC_ARN` | AWS SNS Topic ARN for notifications |
 
-## Asyncio Support
+## Sinks
 
-This library provides asyncio-safe versions of email notification handlers to prevent blocking the event loop:
+The library includes several sink classes for different output destinations:
 
-```python
-import asyncio
-import logging
-from log import configure_logging
-from log.async_handlers import AsyncSafeColoredSMTPHandler
-
-# Configure logging first
-configure_logging(setup='cmd')
-
-# Get a logger
-logger = logging.getLogger(__name__)
-
-# Replace standard handlers with asyncio-safe versions
-for handler in logger.handlers:
-    if isinstance(handler, logging.handlers.SMTPHandler):
-        logger.removeHandler(handler)
-        # Create asyncio-safe handler with same parameters
-        async_handler = AsyncSafeColoredSMTPHandler(
-            mailhost=handler.mailhost,
-            fromaddr=handler.fromaddr,
-            toaddrs=handler.toaddrs,
-            subject=handler.subject
-        )
-        logger.addHandler(async_handler)
-
-# Now you can use the logger in asyncio code without blocking
-async def main():
-    try:
-        # Your asyncio code here
-        result = await some_async_operation()
-    except Exception as e:
-        # This won't block the event loop
-        logger.exception(e)
-
-# Run the asyncio event loop
-asyncio.run(main())
-```
-
-## Custom Handlers
-
-You can add custom handlers (like CloudWatch, Datadog, etc.) directly in the `configure_logging` call:
-
-```python
-import os
-import watchtower
-from log import configure_logging
-import logging
-
-os.environ['CONFIG_LOG_MODULES_EXTRA'] = 'myapp'
-
-configure_logging(
-    setup='web',
-    extra_handlers={
-        'cloudwatch': {
-            'class': 'watchtower.CloudWatchLogHandler',
-            'log_group': 'myapp',
-            'stream_name': 'production',
-            'use_queues': True,
-            'level': 'INFO',
-            # formatter and filters are auto-applied based on setup type
-        }
-    }
-)
-
-logger = logging.getLogger(__name__)
-logger.info('Logs to CloudWatch and all other configured handlers')
-```
-
-The handler is automatically configured with appropriate formatters and filters for your setup type ('web', 'job', etc.). You can override these by explicitly specifying `'formatter'` and `'filters'` in the handler config.
-
-Multiple custom handlers can be added at once:
-
-```python
-configure_logging(
-    setup='job',
-    extra_handlers={
-        'cloudwatch': {
-            'class': 'watchtower.CloudWatchLogHandler',
-            'log_group': 'jobs',
-            'stream_name': 'worker-01',
-            'use_queues': True,
-            'level': 'INFO',
-        },
-        'datadog': {
-            'class': 'datadog.handler.DatadogLogHandler',
-            'api_key': os.getenv('DATADOG_API_KEY'),
-            'level': 'WARNING',
-        }
-    }
-)
-```
-
-## Advanced Usage
-
-### Class-based Logging
-
-```python
-import os
-from log import class_logger, configure_logging
-
-# Make sure to configure your modules first
-os.environ['CONFIG_LOG_MODULES_EXTRA'] = 'myapp,myapp.models'
-configure_logging(setup='cmd')  # or your preferred setup
-
-@class_logger
-class MyClass:
-    def __init__(self):
-        self.logger.info("Initialized MyClass instance")
-
-    def do_something(self):
-        self.logger.debug("Doing something")
-        # ...
-```
-
-### Exception Logging Decorator
-
-```python
-import os
-from log import log_exception, configure_logging
-import logging
-
-# Configure your modules
-os.environ['CONFIG_LOG_MODULES_EXTRA'] = 'myapp,myapp.utils'
-configure_logging(setup='cmd')
-
-# Use module-specific logger
-logger = logging.getLogger(__name__)
-
-@log_exception(logger)
-def risky_function():
-    # This function will log any exceptions that occur
-    # while still allowing them to propagate up
-    return 1 / 0
-```
-
-## Handlers
-
-The library includes several custom log handlers:
-
-- `ColoredStreamHandler`: Colorizes output to terminals
-- `NonBufferedFileHandler`: Writes to file without buffering
-- `ColoredSMTPHandler`: Sends HTML-formatted colored emails
-- `ScreenshotColoredSMTPHandler`: Includes screenshots in error emails
-- `ColoredMandrillHandler`: Sends emails via Mandrill API
-- `ScreenshotColoredMandrillHandler`: Includes screenshots in Mandrill emails
-- `URLHandler`: Posts log messages to an HTTP endpoint
-- `SNSHandler`: Sends log messages to AWS SNS
-
-## Filters
-
-Custom filters to enhance log messages:
-
-- `MachineFilter`: Adds hostname to log records
-- `PreambleFilter`: Adds preamble information about the application
-- `WebServerFilter`: Adds web request context (IP, user) to log records
+- `MandrillSink` / `ScreenshotMandrillSink` - Email via Mandrill API
+- `SMTPSink` / `ScreenshotSMTPSink` - Email via SMTP
+- `SyslogSink` / `TLSSyslogSink` - Syslog output
+- `SNSSink` - AWS SNS notifications
+- `URLSink` - HTTP POST to log aggregators

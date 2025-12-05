@@ -1,26 +1,27 @@
-"""Logging configuration and context
+"""Logging configuration - declarative loguru-based implementation.
 """
+from __future__ import annotations
 
-import copy
 import datetime
 import logging
 import os
-import ssl
 import sys
 from collections.abc import Callable
-from contextlib import suppress
+from copy import deepcopy
+from dataclasses import dataclass, field
+from enum import StrEnum
 from functools import wraps
-from logging.config import dictConfig
 from typing import Any
 
-from libb import is_tty, ismapping, merge_dict, scriptname
+from libb import is_tty, scriptname
 from log import config as config_log
-from log.handlers import ScreenshotColoredMandrillHandler
-from log.handlers import ScreenshotColoredSMTPHandler
-from mail import config as config_mail
+from log._backend import get_backend, intercept_stdlib
 
-with suppress(ImportError):
-    import web
+try:
+    from mail import config as config_mail
+    MAIL_CONFIG_AVAILABLE = True
+except ImportError:
+    MAIL_CONFIG_AVAILABLE = False
 
 try:
     import mailchimp_transactional as MailchimpTransactional
@@ -34,267 +35,381 @@ __all__ = [
     'log_exception',
     'patch_webdriver',
     'class_logger',
-    ]
+    'set_level',
+    'SetupType',
+]
+
+
+class SetupType(StrEnum):
+    """Setup types for logging configuration."""
+    CMD = 'cmd'
+    JOB = 'job'
+    WEB = 'web'
+    TWD = 'twd'
+    SRP = 'srp'
+
+
+# Format strings for loguru
+# <level> tags apply the level's color to the level name only
+FMT_JOB = '<level>{level.name:<4}</level> {time:YYYY-MM-DD HH:mm:ss,SSS} {extra[machine]} {name} {line} {message}'
+FMT_WEB = '<level>{level.name:<4}</level> {time:YYYY-MM-DD HH:mm:ss,SSS} {extra[machine]} {name} {line} [{extra[user]} {extra[ip]}] {message}'
+
+
+@dataclass
+class LogConfig:
+    """Declarative logging configuration."""
+    setup: SetupType
+    app: str = ''
+    app_args: str = ''
+    level: str = 'INFO'
+
+    # Sinks to enable
+    console: bool = True
+    file: bool = False
+    mail: bool = False
+    syslog: bool = False
+    tlssyslog: bool = False
+    sns: bool = False
+
+    # Context
+    web_context: dict = field(default_factory=dict)
+
+
+# Preset configurations per setup type
+PRESETS: dict[SetupType, LogConfig] = {
+    SetupType.CMD: LogConfig(SetupType.CMD, level='DEBUG', console=True),
+    SetupType.JOB: LogConfig(SetupType.JOB, file=True, mail=True, syslog=True, tlssyslog=True, sns=True),
+    SetupType.WEB: LogConfig(SetupType.WEB, file=True, mail=True, syslog=True, tlssyslog=True, sns=True),
+    SetupType.TWD: LogConfig(SetupType.TWD, syslog=True, tlssyslog=True, sns=True),
+    SetupType.SRP: LogConfig(SetupType.SRP, mail=True, syslog=True, tlssyslog=True, sns=True),
+}
+
+
+# Track screenshot sinks for webdriver patching
+_screenshot_sinks: list = []
+
+
+def configure_logging(
+    setup: SetupType | str | None = None,
+    app: str | None = None,
+    app_args: list[str] | None = None,
+    level: str | None = None,
+    extra_handlers: dict[str, dict[str, Any]] | None = None,
+    web_context: dict[str, Callable[[], str]] | None = None,
+) -> None:
+    """Configure logging for any application.
+
+    Args:
+        setup: Setup type ('cmd', 'job', 'web', 'twd', 'srp') or SetupType enum
+        app: Application name (defaults to script name)
+        app_args: Application arguments
+        level: Logging level override
+        extra_handlers: Dict of handler_name -> handler_config for custom handlers
+        web_context: Dict with 'ip_fn' and 'user_fn' callables for web request context.
+                     Example for Flask:
+                         web_context={
+                             'ip_fn': lambda: flask.request.remote_addr,
+                             'user_fn': lambda: flask.session.get('user', ''),
+                         }
+    """
+    global _screenshot_sinks
+    _screenshot_sinks.clear()
+
+    backend = get_backend()
+    backend.reset()
+
+    # Normalize inputs
+    if isinstance(setup, str):
+        setup = SetupType(setup)
+    setup_type = setup or SetupType.CMD
+
+    if app_args is None:
+        app_args = []
+    if not app:
+        app = scriptname()
+        app_args = sys.argv[1:]
+
+    # Get preset and create a copy to modify
+    config = deepcopy(PRESETS[setup_type])
+    config.app = app
+    config.app_args = ' '.join(app_args)
+
+    if level:
+        config.level = level.upper()
+    if web_context:
+        config.web_context = web_context
+
+    # Configure context patchers
+    _configure_context(backend, config)
+
+    # Add sinks based on config
+    _add_sinks(backend, config)
+
+    # Handle extra_handlers (backward compatibility)
+    if extra_handlers:
+        _add_extra_handlers(backend, config, extra_handlers)
+
+    # Set up stdlib logging interception
+    # This makes logging.getLogger('web').info(...) work
+    intercept_stdlib(['cmd', 'job', 'web', 'twd', 'srp'])
+
+    # Also intercept extra modules from config
+    extra_modules = (config_log.log.modules.extra or '').split(',')
+    extra_modules = [m.strip() for m in extra_modules if m.strip()]
+    if extra_modules:
+        intercept_stdlib(extra_modules)
+
+
+def _configure_context(backend, config: LogConfig) -> None:
+    """Set up context patchers (machine, preamble, web)."""
+    import socket
+
+    patchers = []
+
+    # Machine patcher - always add hostname
+    hostname = socket.gethostname()
+
+    def machine_patcher(record):
+        record['extra']['machine'] = hostname
+    patchers.append(machine_patcher)
+
+    # Preamble patcher - for job/srp/twd setups
+    if config.setup in {SetupType.JOB, SetupType.SRP, SetupType.TWD}:
+        preamble_state = {'status': 'succeeded'}
+
+        def preamble_patcher(record):
+            record['extra']['cmd_app'] = config.app
+            record['extra']['cmd_args'] = config.app_args
+            record['extra']['cmd_setup'] = config.setup.value
+            # Track failure status
+            if record['level'].no >= 40:  # ERROR or above
+                preamble_state['status'] = 'failed'
+            record['extra']['cmd_status'] = preamble_state['status']
+
+        patchers.append(preamble_patcher)
+
+    # Web patcher - for web setup or when web_context provided
+    if config.setup == SetupType.WEB or config.web_context:
+        ip_fn = config.web_context.get('ip_fn', lambda: '')
+        user_fn = config.web_context.get('user_fn', lambda: '')
+
+        def web_patcher(record):
+            ipaddr = ''
+            try:
+                ipaddr = ip_fn() or ''
+                if ipaddr:
+                    try:
+                        hostname, _, _ = socket.gethostbyaddr(ipaddr)
+                        ipaddr = hostname
+                    except OSError:
+                        pass
+            except Exception:
+                pass
+            record['extra']['ip'] = ipaddr
+            record['extra']['user'] = user_fn() or ''
+
+        patchers.append(web_patcher)
+
+    # Combine all patchers
+    def combined_patcher(record):
+        for patcher in patchers:
+            patcher(record)
+
+    backend.configure(patcher=combined_patcher)
+
+
+def _add_sinks(backend, config: LogConfig) -> None:
+    """Add sinks based on configuration."""
+    fmt = FMT_WEB if config.setup == SetupType.WEB else FMT_JOB
+
+    # Console sink - always for cmd, or if TTY
+    if config.console or config.setup == SetupType.CMD or is_tty():
+        backend.add_sink(
+            sys.stderr,
+            level=config.level,
+            format=fmt,
+            colorize=True,
+        )
+
+    # File sink - if enabled
+    if config.file:
+        filename = os.path.join(
+            config_log.tmpdir.dir,
+            f'{config.app}_{datetime.datetime.now():%Y%m%d_%H%M%S}.log'
+        )
+        rotation = '1 day' if config.setup == SetupType.WEB else None
+        retention = '3 days' if config.setup == SetupType.WEB else None
+        backend.add_sink(
+            filename,
+            level='INFO',
+            format=fmt,
+            rotation=rotation,
+            retention=retention,
+        )
+
+    # Mail sink - if enabled and configured
+    if config.mail and _mail_configured():
+        from log.sinks import ScreenshotMandrillSink
+        sink = ScreenshotMandrillSink(
+            apikey=config_mail.mandrill.apikey,
+            fromaddr=config_mail.mail.fromemail,
+            toaddrs=config_mail.mail.toemail,
+            subject_template='{extra[machine]} {name} {level.name}',
+        )
+        _screenshot_sinks.append(sink)
+        backend.add_sink(sink, level='ERROR', format=fmt)
+
+    # Syslog sink - if enabled and configured
+    if config.syslog and _syslog_configured():
+        from log.sinks import SyslogSink
+        sink = SyslogSink(
+            host=config_log.syslog.host,
+            port=config_log.syslog.port,
+        )
+        backend.add_sink(sink, level='INFO', format=fmt)
+
+    # TLS Syslog sink - if enabled and configured
+    if config.tlssyslog and _tlssyslog_configured():
+        from log.sinks import TLSSyslogSink
+        sink = TLSSyslogSink(
+            host=config_log.tlssyslog.host,
+            port=config_log.tlssyslog.port,
+            certs_dir=config_log.tlssyslog.dir,
+        )
+        backend.add_sink(sink, level='INFO', format=fmt)
+
+    # SNS sink - if enabled and configured
+    if config.sns and _sns_configured():
+        from log.sinks import SNSSink
+        topic_arn = os.getenv('CONFIG_SNSLOG_TOPIC_ARN')
+        sink = SNSSink(topic_arn=topic_arn)
+        backend.add_sink(sink, level='ERROR', format=fmt)
+
+
+def _add_extra_handlers(backend, config: LogConfig, extra_handlers: dict) -> None:
+    """Add extra handlers (backward compatibility with dictConfig style).
+
+    Supports both:
+    - Direct handler instances
+    - dictConfig-style dicts with '()' factory syntax
+    """
+    fmt = FMT_WEB if config.setup == SetupType.WEB else FMT_JOB
+
+    for handler_conf in extra_handlers.values():
+        if callable(handler_conf) and not isinstance(handler_conf, dict):
+            # Already a handler/sink instance
+            backend.add_sink(handler_conf, level='INFO', format=fmt)
+            continue
+
+        if not isinstance(handler_conf, dict):
+            continue
+
+        handler_level = handler_conf.get('level', 'INFO')
+
+        # Handle '()' factory syntax (dictConfig style)
+        if '()' in handler_conf:
+            factory = handler_conf['()']
+            # Import the class
+            if isinstance(factory, str):
+                parts = factory.rsplit('.', 1)
+                if len(parts) == 2:
+                    module_name, class_name = parts
+                    import importlib
+                    module = importlib.import_module(module_name)
+                    factory = getattr(module, class_name)
+
+            # Get constructor args (exclude config keys)
+            skip_keys = {'()', 'level', 'formatter', 'filters', 'class'}
+            kwargs = {k: v for k, v in handler_conf.items() if k not in skip_keys}
+            handler = factory(**kwargs)
+            backend.add_sink(handler, level=handler_level, format=fmt)
+
+        # Handle 'class' syntax
+        elif 'class' in handler_conf:
+            class_path = handler_conf['class']
+            if isinstance(class_path, str):
+                parts = class_path.rsplit('.', 1)
+                if len(parts) == 2:
+                    module_name, class_name = parts
+                    import importlib
+                    module = importlib.import_module(module_name)
+                    handler_class = getattr(module, class_name)
+
+                    skip_keys = {'class', 'level', 'formatter', 'filters'}
+                    kwargs = {k: v for k, v in handler_conf.items() if k not in skip_keys}
+                    handler = handler_class(**kwargs)
+                    backend.add_sink(handler, level=handler_level, format=fmt)
+
+
+def _mail_configured() -> bool:
+    """Check if mail handler is configured."""
+    return (
+        MAIL_CONFIG_AVAILABLE
+        and MAILCHIMP_ENABLED
+        and bool(os.getenv('CONFIG_MANDRILL_APIKEY'))
+    )
+
+
+def _syslog_configured() -> bool:
+    """Check if syslog handler is configured."""
+    return bool(
+        os.getenv('CONFIG_SYSLOG_HOST')
+        and os.getenv('CONFIG_SYSLOG_PORT')
+    )
+
+
+def _tlssyslog_configured() -> bool:
+    """Check if TLS syslog handler is configured."""
+    return bool(
+        os.getenv('CONFIG_TLSSYSLOG_HOST')
+        and os.getenv('CONFIG_TLSSYSLOG_PORT')
+    )
+
+
+def _sns_configured() -> bool:
+    """Check if SNS handler is configured."""
+    return bool(os.getenv('CONFIG_SNSLOG_TOPIC_ARN'))
 
 
 def set_level(levelname: str) -> None:
-    """Simple utility for setting root logging level.
+    """Set the logging level.
+
+    Note: With loguru, this affects all sinks. For more granular control,
+    add sinks with specific levels.
     """
+    # For backward compatibility with stdlib code that checks levels
     level_names = {v: k for k, v in logging._levelToName.items()}
     level_names['WARN'] = level_names['WARNING']
-    level = level_names[levelname.upper()]
-    for handler in logging.root.handlers:
-        handler.setLevel(level)
+    level = level_names.get(levelname.upper(), logging.INFO)
     logging.root.setLevel(level)
 
 
-def patch_webdriver(this_logger: logging.Logger, this_webdriver: Any) -> None:
-    """Patch logger with SMTP/Mandrill handler for webdriver screenshots.
+def patch_webdriver(this_logger: Any, this_webdriver: Any) -> None:
+    """Patch screenshot sinks with webdriver instance.
+
+    Args:
+        this_logger: Logger instance (kept for backward compat, ignored)
+        this_webdriver: Selenium webdriver instance
     """
-    for h in this_logger.handlers:
-        if isinstance(h, ScreenshotColoredSMTPHandler | ScreenshotColoredMandrillHandler):
-            h.webdriver = this_webdriver
-            this_logger.warning(f'Patching handler {repr(h)} {logging.getLevelName(h.level)}')
+
+    for sink in _screenshot_sinks:
+        if hasattr(sink, 'set_webdriver'):
+            sink.set_webdriver(this_webdriver)
+
+    # Also check if logger has bound sinks (backward compat)
+    if hasattr(this_logger, 'handlers'):
+        for h in this_logger.handlers:
+            if hasattr(h, 'webdriver'):
+                h.webdriver = this_webdriver
 
 
-DEF_FILE_FMT = os.path.join(config_log.tmpdir.dir, '%(app)s_%(date)s_%(time)s.log')
-DEF_JOB_FMT = '%(levelname)-4s %(asctime)s %(machine)s %(name)s %(lineno)d %(message)s'
-DEF_WEB_FMT = '%(levelname)-4s %(asctime)s %(machine)s %(name)s %(lineno)d [%(user)s %(ip)s] %(message)s'
-
-WEB_FILTERS = ['machine', 'webserver']
-JOB_FILTERS = ['machine', 'preamble']
-
-LOG_CONF = {
-    'version': 1,
-    'loggers': {},
-    'formatters': {
-        'job_fmt': {'format': DEF_JOB_FMT},
-        'web_fmt': {'format': DEF_WEB_FMT},
-        'twd_fmt': {'format': DEF_JOB_FMT},
-    },
-    'filters': {
-        'machine': {
-            '()': 'log.filters.MachineFilter',
-            },
-        'webserver': {
-            '()': 'log.filters.WebServerFilter',
-            'ip_fn': lambda: web.ctx.get('ip') if 'web' in globals() else '',
-            'user_fn': lambda: (hasattr(web.ctx, 'session')
-                                and web.ctx.session.get('user')) if 'web' in globals() else '',
-            },
-        'preamble': {
-            '()': 'log.filters.PreambleFilter',
-            'app': '%(app)s',
-            'args': '%(app_args)s',
-            'setup': '%(setup)s',
-            },
-        },
-    'handlers': {
-        'cmd': {
-            'level': 'DEBUG',
-            'formatter': 'job_fmt',
-            'filters': ['machine'],
-            'class': 'log.handlers.ColoredStreamHandler',
-            },
-        'job_file': {
-            'level': 'INFO',
-            'class': 'log.handlers.NonBufferedFileHandler',
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-            'filename': DEF_FILE_FMT,
-            },
-        'web_file': {
-            'level': 'INFO',
-            'class': 'logging.handlers.TimedRotatingFileHandler',
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-            'filename': DEF_FILE_FMT,
-            'when': 'D',
-            'interval': 1,
-            'backupCount': 3,
-            },
-        },
-    }
-
-WEB_HANDLERS = ['web_file']
-JOB_HANDLERS = ['job_file']
-TWD_HANDLERS = []
-SRP_HANDLERS = []
-
-if MAILCHIMP_ENABLED and os.getenv('CONFIG_MANDRILL_APIKEY'):
-    WEB_HANDLERS.extend(['web_mail'])
-    JOB_HANDLERS.extend(['job_mail'])
-    SRP_HANDLERS.extend(['job_mail'])
-    LOG_CONF['handlers'].update({
-        'job_mail': {
-            'level': 'ERROR',
-            'class': 'log.handlers.ScreenshotColoredMandrillHandler',
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-            'apikey': config_mail.mandrill.apikey,
-            'fromaddr': config_mail.mail.fromemail,
-            'toaddrs': config_mail.mail.toemail,
-            'subject': '%(machine)s %(name)s %(levelname)s',
-        },
-        'web_mail': {
-            'level': 'ERROR',
-            'class': 'log.handlers.ScreenshotColoredMandrillHandler',
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-            'apikey': config_mail.mandrill.apikey,
-            'fromaddr': config_mail.mail.fromemail,
-            'toaddrs': config_mail.mail.toemail,
-            'subject': '%(machine)s %(name)s %(levelname)s',
-        },
-    })
-
-if os.getenv('CONFIG_SYSLOG_HOST') and os.getenv('CONFIG_SYSLOG_PORT'):
-    WEB_HANDLERS.extend(['web_sysl'])
-    TWD_HANDLERS.extend(['web_sysl'])
-    JOB_HANDLERS.extend(['job_sysl'])
-    SRP_HANDLERS.extend(['job_sysl'])
-    LOG_CONF['handlers'].update({
-        'job_sysl': {
-            'level': 'INFO',
-            'class': 'logging.handlers.SysLogHandler',
-            'address': (config_log.syslog.host, config_log.syslog.port),
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-        },
-        'web_sysl': {
-            'level': 'INFO',
-            'class': 'logging.handlers.SysLogHandler',
-            'address': (config_log.syslog.host, config_log.syslog.port),
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-        },
-    })
-
-if os.getenv('CONFIG_TLSSYSLOG_HOST') and os.getenv('CONFIG_TLSSYSLOG_PORT'):
-    WEB_HANDLERS.extend(['web_tlssysl'])
-    TWD_HANDLERS.extend(['web_tlssysl'])
-    JOB_HANDLERS.extend(['job_tlssysl'])
-    SRP_HANDLERS.extend(['job_tlssysl'])
-    LOG_CONF['handlers'].update({
-        'job_tlssysl': {
-            'level': 'INFO',
-            'class': 'tlssyslog.handlers.TLSSysLogHandler',
-            'address': (config_log.tlssyslog.host, config_log.tlssyslog.port),
-            'ssl_kwargs': {
-                'cert_reqs': ssl.CERT_REQUIRED,
-                'ssl_version': ssl.PROTOCOL_TLS,
-                'ca_certs': config_log.tlssyslog.dir
-                },
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-        },
-        'web_tlssysl': {
-            'level': 'INFO',
-            'class': 'tlssyslog.handlers.TLSSysLogHandler',
-            'address': (config_log.tlssyslog.host, config_log.tlssyslog.port),
-            'ssl_kwargs': {
-                'cert_reqs': ssl.CERT_REQUIRED,
-                'ssl_version': ssl.PROTOCOL_TLS,
-                'ca_certs': config_log.tlssyslog.dir
-                },
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-        },
-    })
-
-if os.getenv('CONFIG_SNSLOG_TOPIC_ARN'):
-    WEB_HANDLERS.extend(['web_sns'])
-    TWD_HANDLERS.extend(['web_sns'])
-    JOB_HANDLERS.extend(['job_sns'])
-    SRP_HANDLERS.extend(['job_sns'])
-    LOG_CONF['handlers'].update({
-        'job_sns': {
-            'level': 'ERROR',
-            'class': 'log.handlers.SNSHandler',
-            'topic_arn': os.getenv('CONFIG_SNSLOG_TOPIC_ARN'),
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-        },
-        'web_sns': {
-            'level': 'ERROR',
-            'class': 'log.handlers.SNSHandler',
-            'topic_arn': os.getenv('CONFIG_SNSLOG_TOPIC_ARN'),
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-        },
-    })
+_logged_classes: set[type] = set()
 
 
-CMD_CONF = {
-    'loggers': {
-        'cmd': {
-            'handlers': ['cmd'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
-    },
-}
-CMD_CONF['loggers']['job'] = CMD_CONF['loggers']['cmd']
-CMD_CONF['loggers']['twd'] = CMD_CONF['loggers']['cmd']
-CMD_CONF['loggers']['web'] = CMD_CONF['loggers']['cmd']
-CMD_CONF['loggers']['srp'] = CMD_CONF['loggers']['cmd']
-
-WEB_CONF = {
-    'loggers': {
-        'web': {
-            'handlers': WEB_HANDLERS,
-            'level': 'INFO',
-            'propagate': True,
-        },
-    },
-}
-
-TWD_CONF = {
-    'loggers': {
-        'twd': {
-            'handlers': TWD_HANDLERS,
-            'level': 'INFO',
-            'propagate': True,
-        },
-    },
-}
-
-
-JOB_CONF = {
-    'loggers': {
-        'job': {
-            'handlers': JOB_HANDLERS,
-            'level': 'INFO',
-            'propagate': True,
-        },
-    },
-}
-
-SRP_CONF = {
-    'loggers': {
-        'srp': {
-            'handlers': SRP_HANDLERS,
-            'level': 'INFO',
-            'propagate': True,
-        },
-    },
-}
-
-for mod in (config_log.log.modules.extra or '').split(','):
-    if not mod:
-        continue
-    CMD_CONF['loggers'][mod] = CMD_CONF['loggers']['cmd']
-    JOB_CONF['loggers'][mod] = JOB_CONF['loggers']['job']
-    TWD_CONF['loggers'][mod] = TWD_CONF['loggers']['twd']
-    WEB_CONF['loggers'][mod] = WEB_CONF['loggers']['web']
-    SRP_CONF['loggers'][mod] = SRP_CONF['loggers']['srp']
-
-
-_logged_classes = set()
-
-
-def class_logger(cls: type, enable: bool | str = False) -> None:
+def class_logger(cls: type, enable: bool | str = False) -> type:
     """Add logger attribute to a class.
+
+    The logger is a stdlib logger that gets intercepted by loguru.
     """
     logger = logging.getLogger(cls.__module__ + '.' + cls.__name__)
     if enable == 'debug':
@@ -305,144 +420,13 @@ def class_logger(cls: type, enable: bool | str = False) -> None:
     cls._should_log_info = lambda self: logger.isEnabledFor(logging.INFO)
     cls.logger = logger
     _logged_classes.add(cls)
+    return cls
 
 
-def configure_logging(setup: str | None = None, app: str | None = None,
-                      app_args: list[str] | None = None, level: str | None = None,
-                      extra_handlers: dict[str, dict[str, Any]] | None = None) -> None:
-    """Configure console and file logging for any app.
-
-    Args:
-        setup: Setup type ('cmd', 'job', 'web', 'twd', 'srp')
-        app: Application name (defaults to script name)
-        app_args: Application arguments
-        level: Logging level override
-        extra_handlers: Dict of handler_name -> handler_config for custom handlers
-    """
-    if app_args is None:
-        app_args = []
-    if not app:
-        app = scriptname()
-        app_args = sys.argv[1:]
-
-    if level:
-        set_level(level)
-
-    logconfig = copy.deepcopy(LOG_CONF)
-
-    match setup:
-        case 'cmd':
-            merge_dict(logconfig, CMD_CONF)
-        case 'job':
-            merge_dict(logconfig, JOB_CONF)
-        case 'twd':
-            merge_dict(logconfig, TWD_CONF)
-        case 'web':
-            merge_dict(logconfig, WEB_CONF)
-        case 'srp':
-            merge_dict(logconfig, SRP_CONF)
-
-    if is_tty() and setup != 'cmd':
-        merge_dict(logconfig, CMD_CONF)
-
-    if extra_handlers:
-        _add_extra_handlers(logconfig, setup, extra_handlers)
-
-    file_fmt = {
-        'app': app or '',
-        'app_args': ' '.join(app_args),
-        'setup': setup or '',
-        'date': datetime.datetime.now().strftime('%Y%m%d'),
-        'time': datetime.datetime.now().strftime('%H%M%S'),
-        }
-
-    def file_formatter(thed: dict[str, Any], str_fmt: dict[str, str] = file_fmt) -> None:
-        for k, subd_or_file in thed.items():
-            if ismapping(subd_or_file):
-                file_formatter(subd_or_file)
-            elif k in {'app', 'args', 'filename'}:
-                thed[k] = subd_or_file % str_fmt
-
-    file_formatter(logconfig)
-
-    dictConfig(logconfig)
-
-
-def _add_extra_handlers(logconfig: dict[str, Any], setup: str | None,
-                        extra_handlers: dict[str, dict[str, Any]]) -> None:
-    """Add custom handlers to all loggers in the configuration.
-
-    Args:
-        logconfig: Logging configuration dictionary
-        setup: Setup type ('cmd', 'job', 'web', 'twd', 'srp')
-        extra_handlers: Dict of handler_name -> handler_config
-    """
-    defaults = _get_handler_defaults(setup)
-
-    if not defaults['logger_name']:
-        return
-
-    for handler_name, handler_config in extra_handlers.items():
-        config = dict(handler_config)
-
-        if 'formatter' not in config and defaults['formatter']:
-            config['formatter'] = defaults['formatter']
-
-        if 'filters' not in config and defaults['filters']:
-            config['filters'] = list(defaults['filters'])
-
-        logconfig['handlers'][handler_name] = config
-
-        for logger_config in logconfig.get('loggers', {}).values():
-            if 'handlers' in logger_config:
-                logger_config['handlers'].append(handler_name)
-
-
-def _get_handler_defaults(setup: str | None) -> dict[str, Any]:
-    """Get default formatter, filters, and logger name for a setup type.
-
-    Args:
-        setup: Setup type ('cmd', 'job', 'web', 'twd', 'srp')
-
-    Returns
-        Dict with 'formatter', 'filters', and 'logger_name' keys
-    """
-    defaults_map = {
-        'web': {
-            'formatter': 'web_fmt',
-            'filters': WEB_FILTERS,
-            'logger_name': 'web',
-            },
-        'job': {
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-            'logger_name': 'job',
-            },
-        'twd': {
-            'formatter': 'twd_fmt',
-            'filters': JOB_FILTERS,
-            'logger_name': 'twd',
-            },
-        'srp': {
-            'formatter': 'job_fmt',
-            'filters': JOB_FILTERS,
-            'logger_name': 'srp',
-            },
-        'cmd': {
-            'formatter': 'job_fmt',
-            'filters': ['machine'],
-            'logger_name': 'cmd',
-            },
-        }
-    return defaults_map.get(setup, {
-        'formatter': None,
-        'filters': None,
-        'logger_name': None,
-        })
-
-
-def log_exception(logger: logging.Logger) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def log_exception(logger: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator that logs exceptions and re-raises them.
+
+    Works with both stdlib loggers and facade Logger instances.
     """
     def wrapper(fn: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(fn)
@@ -450,14 +434,15 @@ def log_exception(logger: logging.Logger) -> Callable[[Callable[..., Any]], Call
             try:
                 return fn(*args, **kwargs)
             except Exception as exc:
-                logger.exception(exc)
-                raise exc
+                if hasattr(logger, 'exception'):
+                    logger.exception(str(exc))
+                raise
         return wrapped_fn
     return wrapper
 
 
 if __name__ == '__main__':
-    configure_logging('cmd')
+    configure_logging(SetupType.CMD)
     logger = logging.getLogger('cmd')
     logger.debug('Debug')
     logger.info('Info')

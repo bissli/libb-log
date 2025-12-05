@@ -9,6 +9,7 @@ packages = [{ include = "log", from = "src" }]
 [tool.poetry.dependencies]
 python = "^3.9"
 
+loguru = "^0.7"
 tls-syslog = "0.2.0"
 colorama = { version = "*", markers = "sys_platform == 'win32'" }
 

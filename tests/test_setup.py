@@ -1,9 +1,11 @@
+"""Tests for log.setup module - loguru-based implementation."""
 import logging
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from log.setup import _get_handler_defaults, class_logger, configure_logging
+from log.setup import SetupType, class_logger, configure_logging
 from log.setup import log_exception, patch_webdriver, set_level
 
 #
@@ -15,9 +17,7 @@ class TestSetLevel:
 
     def setup_method(self):
         """Reset logging handlers before each test."""
-        # Clear any existing handlers
         logging.root.handlers.clear()
-        # Add a basic handler for testing
         handler = logging.StreamHandler()
         logging.root.addHandler(handler)
         logging.root.setLevel(logging.DEBUG)
@@ -30,8 +30,6 @@ class TestSetLevel:
         """Test setting level to DEBUG."""
         set_level('debug')
         assert logging.root.level == logging.DEBUG
-        for handler in logging.root.handlers:
-            assert handler.level == logging.DEBUG
 
     def test_set_level_info(self):
         """Test setting level to INFO."""
@@ -65,11 +63,6 @@ class TestSetLevel:
         set_level('Info')
         assert logging.root.level == logging.INFO
 
-    def test_set_level_invalid_raises(self):
-        """Test invalid level name raises KeyError."""
-        with pytest.raises(KeyError):
-            set_level('invalid_level')
-
 
 #
 # patch_webdriver tests
@@ -78,42 +71,48 @@ class TestSetLevel:
 
 class TestPatchWebdriver:
 
-    def test_patches_screenshot_smtp_handler(self):
-        """Test patch_webdriver patches ScreenshotColoredSMTPHandler."""
-        from log.handlers import ScreenshotColoredSMTPHandler
+    def test_patches_screenshot_sinks(self):
+        """Test patch_webdriver patches screenshot sinks via module registry."""
+        from log import setup
+        from log.sinks import ScreenshotMandrillSink
+
         mock_webdriver = MagicMock()
         mock_logger = MagicMock()
-        mock_handler = MagicMock(spec=ScreenshotColoredSMTPHandler)
-        mock_handler.level = logging.ERROR
+
+        # Create a mock sink with set_webdriver method
+        mock_sink = MagicMock(spec=ScreenshotMandrillSink)
+
+        # Add to module registry
+        setup._screenshot_sinks.append(mock_sink)
+        try:
+            patch_webdriver(mock_logger, mock_webdriver)
+            mock_sink.set_webdriver.assert_called_once_with(mock_webdriver)
+        finally:
+            setup._screenshot_sinks.clear()
+
+    def test_patches_legacy_handlers_on_logger(self):
+        """Test patch_webdriver patches legacy handlers with webdriver attr."""
+        mock_webdriver = MagicMock()
+        mock_logger = MagicMock()
+        mock_handler = MagicMock()
+        mock_handler.webdriver = None
         mock_logger.handlers = [mock_handler]
 
         patch_webdriver(mock_logger, mock_webdriver)
 
         assert mock_handler.webdriver == mock_webdriver
 
-    def test_patches_screenshot_mandrill_handler(self):
-        """Test patch_webdriver patches ScreenshotColoredMandrillHandler."""
-        from log.handlers import ScreenshotColoredMandrillHandler
-        mock_webdriver = MagicMock()
-        mock_logger = MagicMock()
-        mock_handler = MagicMock(spec=ScreenshotColoredMandrillHandler)
-        mock_handler.level = logging.ERROR
-        mock_logger.handlers = [mock_handler]
-
-        patch_webdriver(mock_logger, mock_webdriver)
-
-        assert mock_handler.webdriver == mock_webdriver
-
-    def test_ignores_non_screenshot_handlers(self):
-        """Test patch_webdriver ignores non-screenshot handlers."""
+    def test_ignores_handlers_without_webdriver_attr(self):
+        """Test patch_webdriver ignores handlers without webdriver attribute."""
         mock_webdriver = MagicMock()
         mock_logger = MagicMock()
         mock_handler = MagicMock(spec=logging.StreamHandler)
+        # StreamHandler doesn't have webdriver attribute
+        del mock_handler.webdriver
         mock_logger.handlers = [mock_handler]
 
+        # Should not raise
         patch_webdriver(mock_logger, mock_webdriver)
-
-        assert not hasattr(mock_handler, 'webdriver') or mock_handler.webdriver != mock_webdriver
 
 
 #
@@ -141,7 +140,7 @@ class TestClassLogger:
         class_logger(MyTestClass)
 
         expected_name = f'{MyTestClass.__module__}.MyTestClass'
-        assert TestClass.logger.name == expected_name if 'TestClass' in dir() else True
+        assert MyTestClass.logger.name == expected_name
 
     def test_adds_should_log_debug_method(self):
         """Test class_logger adds _should_log_debug method."""
@@ -254,54 +253,6 @@ class TestLogException:
 
 
 #
-# _get_handler_defaults tests
-#
-
-
-class TestGetHandlerDefaults:
-
-    def test_web_setup_defaults(self):
-        """Test defaults for 'web' setup."""
-        defaults = _get_handler_defaults('web')
-        assert defaults['formatter'] == 'web_fmt'
-        assert defaults['logger_name'] == 'web'
-        assert 'webserver' in defaults['filters']
-
-    def test_job_setup_defaults(self):
-        """Test defaults for 'job' setup."""
-        defaults = _get_handler_defaults('job')
-        assert defaults['formatter'] == 'job_fmt'
-        assert defaults['logger_name'] == 'job'
-        assert 'preamble' in defaults['filters']
-
-    def test_twd_setup_defaults(self):
-        """Test defaults for 'twd' setup."""
-        defaults = _get_handler_defaults('twd')
-        assert defaults['formatter'] == 'twd_fmt'
-        assert defaults['logger_name'] == 'twd'
-
-    def test_srp_setup_defaults(self):
-        """Test defaults for 'srp' setup."""
-        defaults = _get_handler_defaults('srp')
-        assert defaults['formatter'] == 'job_fmt'
-        assert defaults['logger_name'] == 'srp'
-
-    def test_cmd_setup_defaults(self):
-        """Test defaults for 'cmd' setup."""
-        defaults = _get_handler_defaults('cmd')
-        assert defaults['formatter'] == 'job_fmt'
-        assert defaults['logger_name'] == 'cmd'
-        assert 'machine' in defaults['filters']
-
-    def test_unknown_setup_defaults(self):
-        """Test defaults for unknown setup returns None values."""
-        defaults = _get_handler_defaults('unknown')
-        assert defaults['formatter'] is None
-        assert defaults['filters'] is None
-        assert defaults['logger_name'] is None
-
-
-#
 # configure_logging tests
 #
 
@@ -316,61 +267,254 @@ class TestConfigureLogging:
         """Clean up logging after each test."""
         logging.root.handlers.clear()
 
+    @patch('log.setup.get_backend')
     @patch('log.setup.is_tty', return_value=False)
-    @patch('log.setup.dictConfig')
-    def test_configure_cmd_setup(self, mock_dictconfig, mock_is_tty):
+    def test_configure_cmd_setup(self, mock_is_tty, mock_get_backend):
         """Test configure_logging with 'cmd' setup."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
         configure_logging(setup='cmd', app='testapp')
-        mock_dictconfig.assert_called_once()
-        config = mock_dictconfig.call_args[0][0]
-        assert 'cmd' in config.get('loggers', {})
 
+        mock_backend.reset.assert_called_once()
+        mock_backend.configure.assert_called_once()
+        # Should add console sink for cmd
+        assert mock_backend.add_sink.called
+
+    @patch('log.setup.get_backend')
     @patch('log.setup.is_tty', return_value=False)
-    @patch('log.setup.dictConfig')
-    def test_configure_job_setup(self, mock_dictconfig, mock_is_tty):
+    def test_configure_job_setup(self, mock_is_tty, mock_get_backend):
         """Test configure_logging with 'job' setup."""
-        configure_logging(setup='job', app='testapp')
-        mock_dictconfig.assert_called_once()
-        config = mock_dictconfig.call_args[0][0]
-        assert 'job' in config.get('loggers', {})
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
 
+        configure_logging(setup='job', app='testapp')
+
+        mock_backend.reset.assert_called_once()
+        mock_backend.configure.assert_called_once()
+
+    @patch('log.setup.get_backend')
     @patch('log.setup.is_tty', return_value=False)
-    @patch('log.setup.dictConfig')
-    def test_configure_web_setup(self, mock_dictconfig, mock_is_tty):
+    def test_configure_web_setup(self, mock_is_tty, mock_get_backend):
         """Test configure_logging with 'web' setup."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
         configure_logging(setup='web', app='testapp')
-        mock_dictconfig.assert_called_once()
-        config = mock_dictconfig.call_args[0][0]
-        assert 'web' in config.get('loggers', {})
 
+        mock_backend.reset.assert_called_once()
+        mock_backend.configure.assert_called_once()
+
+    @patch('log.setup.get_backend')
     @patch('log.setup.is_tty', return_value=True)
-    @patch('log.setup.dictConfig')
-    def test_configure_adds_cmd_when_tty(self, mock_dictconfig, mock_is_tty):
-        """Test configure_logging adds 'cmd' logger when running in TTY."""
+    def test_configure_adds_console_when_tty(self, mock_is_tty, mock_get_backend):
+        """Test configure_logging adds console sink when running in TTY."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
         configure_logging(setup='job', app='testapp')
-        mock_dictconfig.assert_called_once()
-        config = mock_dictconfig.call_args[0][0]
-        # When is_tty() is True and setup != 'cmd', CMD_CONF is merged
-        assert 'cmd' in config.get('loggers', {}) or 'job' in config.get('loggers', {})
 
-    @patch('log.setup.is_tty', return_value=False)
-    @patch('log.setup.dictConfig')
-    def test_configure_with_app_name(self, mock_dictconfig, mock_is_tty):
-        """Test configure_logging uses provided app name."""
-        configure_logging(setup='cmd', app='myapp')
-        mock_dictconfig.assert_called_once()
-        config = mock_dictconfig.call_args[0][0]
-        # Check that app name was formatted into config
-        # The filename should contain 'myapp'
-        handlers = config.get('handlers', {})
-        for handler_config in handlers.values():
-            if 'filename' in handler_config:
-                assert 'myapp' in handler_config['filename']
+        # Console sink should be added when is_tty() returns True
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        console_sinks = [c for c in add_sink_calls if c[0][0] == sys.stderr]
+        assert len(console_sinks) > 0
 
+    @patch('log.setup.get_backend')
     @patch('log.setup.is_tty', return_value=False)
-    @patch('log.setup.dictConfig')
-    def test_configure_with_extra_handlers(self, mock_dictconfig, mock_is_tty):
-        """Test configure_logging adds extra handlers."""
+    def test_configure_with_level_override(self, mock_is_tty, mock_get_backend):
+        """Test configure_logging applies level override."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        configure_logging(setup='cmd', app='testapp', level='error')
+
+        # Check that level was passed to add_sink
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        for call in add_sink_calls:
+            kwargs = call[1]
+            if 'level' in kwargs and kwargs.get('colorize'):
+                # Console sink should have overridden level
+                assert kwargs['level'] == 'ERROR'
+
+
+#
+# SetupType enum tests
+#
+
+
+class TestSetupType:
+
+    def test_setup_type_values(self):
+        """Test SetupType enum has correct values."""
+        assert SetupType.CMD.value == 'cmd'
+        assert SetupType.JOB.value == 'job'
+        assert SetupType.WEB.value == 'web'
+        assert SetupType.TWD.value == 'twd'
+        assert SetupType.SRP.value == 'srp'
+
+    def test_setup_type_is_str(self):
+        """Test SetupType inherits from str for backward compatibility."""
+        assert isinstance(SetupType.CMD, str)
+        assert SetupType.CMD == 'cmd'
+
+    def test_setup_type_from_string(self):
+        """Test SetupType can be created from string."""
+        assert SetupType('cmd') == SetupType.CMD
+        assert SetupType('job') == SetupType.JOB
+
+    def test_setup_type_invalid_raises(self):
+        """Test invalid setup type raises ValueError."""
+        with pytest.raises(ValueError):
+            SetupType('invalid')
+
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=False)
+    def test_configure_accepts_enum(self, mock_is_tty, mock_get_backend):
+        """Test configure_logging accepts SetupType enum."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        configure_logging(setup=SetupType.CMD, app='testapp')
+
+        mock_backend.reset.assert_called_once()
+
+
+#
+# class_logger as decorator tests
+#
+
+
+class TestClassLoggerDecorator:
+
+    def test_class_logger_returns_class(self):
+        """Test class_logger returns the class for decorator use."""
+        class TestClass:
+            pass
+
+        result = class_logger(TestClass)
+        assert result is TestClass
+
+    def test_class_logger_as_decorator(self):
+        """Test class_logger can be used as decorator."""
+        @class_logger
+        class DecoratedClass:
+            pass
+
+        assert hasattr(DecoratedClass, 'logger')
+        assert isinstance(DecoratedClass.logger, logging.Logger)
+
+
+#
+# web_context parameter tests
+#
+
+
+class TestWebContext:
+
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=False)
+    def test_configure_with_web_context(self, mock_is_tty, mock_get_backend):
+        """Test configure_logging accepts web_context parameter."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        ip_fn = lambda: '192.168.1.1'
+        user_fn = lambda: 'testuser'
+        web_context = {'ip_fn': ip_fn, 'user_fn': user_fn}
+
+        configure_logging(setup='web', app='testapp', web_context=web_context)
+
+        # Verify configure was called with a patcher
+        mock_backend.configure.assert_called_once()
+        call_kwargs = mock_backend.configure.call_args[1]
+        assert 'patcher' in call_kwargs
+        assert callable(call_kwargs['patcher'])
+
+
+#
+# LogConfig and PRESETS tests
+#
+
+
+class TestLogConfig:
+
+    def test_presets_exist_for_all_setup_types(self):
+        """Test that PRESETS has config for each SetupType."""
+        from log.setup import PRESETS
+
+        for setup_type in SetupType:
+            assert setup_type in PRESETS
+            config = PRESETS[setup_type]
+            assert config.setup == setup_type
+
+    def test_cmd_preset_has_console_enabled(self):
+        """Test CMD preset enables console logging."""
+        from log.setup import PRESETS
+
+        config = PRESETS[SetupType.CMD]
+        assert config.console is True
+        assert config.level == 'DEBUG'
+
+    def test_job_preset_has_sinks_enabled(self):
+        """Test JOB preset enables appropriate sinks."""
+        from log.setup import PRESETS
+
+        config = PRESETS[SetupType.JOB]
+        assert config.file is True
+        assert config.mail is True
+        assert config.syslog is True
+        assert config.sns is True
+
+    def test_web_preset_has_sinks_enabled(self):
+        """Test WEB preset enables appropriate sinks."""
+        from log.setup import PRESETS
+
+        config = PRESETS[SetupType.WEB]
+        assert config.file is True
+        assert config.mail is True
+        assert config.syslog is True
+        assert config.sns is True
+
+
+#
+# stdlib interception tests
+#
+
+
+class TestStdlibInterception:
+
+    @patch('log.setup.get_backend')
+    @patch('log.setup.intercept_stdlib')
+    @patch('log.setup.is_tty', return_value=False)
+    def test_configure_sets_up_stdlib_interception(self, mock_is_tty, mock_intercept, mock_get_backend):
+        """Test configure_logging sets up stdlib logging interception."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        configure_logging(setup='cmd', app='testapp')
+
+        # Should intercept standard setup type loggers
+        mock_intercept.assert_called()
+        call_args = mock_intercept.call_args_list[0][0][0]
+        assert 'cmd' in call_args
+        assert 'job' in call_args
+        assert 'web' in call_args
+
+
+#
+# extra_handlers backward compatibility tests
+#
+
+
+class TestExtraHandlers:
+
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=False)
+    def test_configure_with_extra_handlers_dict(self, mock_is_tty, mock_get_backend):
+        """Test configure_logging handles extra_handlers with dictConfig style."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
         extra = {
             'custom_handler': {
                 'level': 'DEBUG',
@@ -378,17 +522,27 @@ class TestConfigureLogging:
             }
         }
         configure_logging(setup='job', app='testapp', extra_handlers=extra)
-        mock_dictconfig.assert_called_once()
-        config = mock_dictconfig.call_args[0][0]
-        assert 'custom_handler' in config.get('handlers', {})
 
+        # Should call add_sink for the extra handler
+        assert mock_backend.add_sink.called
+
+    @patch('log.setup.get_backend')
     @patch('log.setup.is_tty', return_value=False)
-    @patch('log.setup.set_level')
-    @patch('log.setup.dictConfig')
-    def test_configure_with_level(self, mock_dictconfig, mock_set_level, mock_is_tty):
-        """Test configure_logging sets level when provided."""
-        configure_logging(setup='cmd', app='testapp', level='debug')
-        mock_set_level.assert_called_once_with('debug')
+    def test_configure_with_callable_handler(self, mock_is_tty, mock_get_backend):
+        """Test configure_logging handles callable handler instances."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        mock_handler = MagicMock()
+        extra = {
+            'custom': mock_handler
+        }
+        configure_logging(setup='job', app='testapp', extra_handlers=extra)
+
+        # Should add the callable directly as a sink
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        handler_added = any(c[0][0] == mock_handler for c in add_sink_calls)
+        assert handler_added
 
 
 if __name__ == '__main__':

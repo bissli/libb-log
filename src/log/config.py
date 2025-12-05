@@ -3,7 +3,7 @@ from pathlib import Path
 
 from libb import Setting, expandabspath, get_tempdir, is_tty
 
-Setting.unlock()  # temp
+Setting.unlock()
 
 # Environment
 HERE = Path(Path(__file__).parent).resolve()
@@ -29,3 +29,5 @@ if os.getenv('CONFIG_TLSSYSLOG_DIR'):
 log = Setting()
 log.modules.extra = os.getenv('CONFIG_LOG_MODULES_EXTRA', '')
 log.modules.ignore = os.getenv('CONFIG_LOG_MODULES_IGNORE', '')
+
+Setting.lock()
