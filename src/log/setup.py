@@ -240,6 +240,7 @@ def _configure_context(backend, config: LogConfig) -> None:
 def _add_sinks(backend, config: LogConfig) -> None:
     """Add sinks based on configuration."""
     fmt = FMT_WEB if config.setup == SetupType.WEB else FMT_JOB
+    diagnose = config_log.log.enable_diagnose
 
     # When in TTY, use DEBUG level for interactive debugging
     if config.console or config.setup == SetupType.CMD or is_tty():
@@ -249,6 +250,8 @@ def _add_sinks(backend, config: LogConfig) -> None:
             level=console_level,
             format=fmt,
             colorize=None,
+            backtrace=False,
+            diagnose=diagnose,
         )
 
     # File sink - if enabled
@@ -265,6 +268,8 @@ def _add_sinks(backend, config: LogConfig) -> None:
             format=fmt,
             rotation=rotation,
             retention=retention,
+            backtrace=False,
+            diagnose=diagnose,
         )
 
     # Mail sink - if enabled and configured
@@ -277,7 +282,7 @@ def _add_sinks(backend, config: LogConfig) -> None:
             subject_template='{extra[machine]} {name} {level.name}',
         )
         _screenshot_sinks.append(sink)
-        backend.add_sink(sink, level='ERROR', format=fmt)
+        backend.add_sink(sink, level='ERROR', format=fmt, backtrace=False, diagnose=diagnose)
 
     # Syslog sink - if enabled and configured
     if config.syslog and _syslog_configured():
@@ -286,7 +291,7 @@ def _add_sinks(backend, config: LogConfig) -> None:
             host=config_log.syslog.host,
             port=config_log.syslog.port,
         )
-        backend.add_sink(sink, level='INFO', format=fmt)
+        backend.add_sink(sink, level='INFO', format=fmt, backtrace=False, diagnose=diagnose)
 
     # TLS Syslog sink - if enabled and configured
     if config.tlssyslog and _tlssyslog_configured():
@@ -296,14 +301,14 @@ def _add_sinks(backend, config: LogConfig) -> None:
             port=config_log.tlssyslog.port,
             certs_dir=config_log.tlssyslog.dir,
         )
-        backend.add_sink(sink, level='INFO', format=fmt)
+        backend.add_sink(sink, level='INFO', format=fmt, backtrace=False, diagnose=diagnose)
 
     # SNS sink - if enabled and configured
     if config.sns and _sns_configured():
         from log.sinks import SNSSink
         topic_arn = os.getenv('CONFIG_SNSLOG_TOPIC_ARN')
         sink = SNSSink(topic_arn=topic_arn)
-        backend.add_sink(sink, level='ERROR', format=fmt)
+        backend.add_sink(sink, level='ERROR', format=fmt, backtrace=False, diagnose=diagnose)
 
 
 def _add_extra_handlers(backend, config: LogConfig, extra_handlers: dict) -> None:
@@ -314,11 +319,12 @@ def _add_extra_handlers(backend, config: LogConfig, extra_handlers: dict) -> Non
     - dictConfig-style dicts with '()' factory syntax
     """
     fmt = FMT_WEB if config.setup == SetupType.WEB else FMT_JOB
+    diagnose = config_log.log.enable_diagnose
 
     for handler_conf in extra_handlers.values():
         if callable(handler_conf) and not isinstance(handler_conf, dict):
             # Already a handler/sink instance
-            backend.add_sink(handler_conf, level='INFO', format=fmt)
+            backend.add_sink(handler_conf, level='INFO', format=fmt, backtrace=False, diagnose=diagnose)
             continue
 
         if not isinstance(handler_conf, dict):
@@ -340,7 +346,7 @@ def _add_extra_handlers(backend, config: LogConfig, extra_handlers: dict) -> Non
             # Get constructor args (exclude config keys)
             kwargs = {k: v for k, v in handler_conf.items() if k not in _HANDLER_SKIP_KEYS}
             handler = factory(**kwargs)
-            backend.add_sink(handler, level=handler_level, format=fmt)
+            backend.add_sink(handler, level=handler_level, format=fmt, backtrace=False, diagnose=diagnose)
 
         # Handle 'class' syntax
         elif 'class' in handler_conf:
@@ -354,7 +360,7 @@ def _add_extra_handlers(backend, config: LogConfig, extra_handlers: dict) -> Non
 
                     kwargs = {k: v for k, v in handler_conf.items() if k not in _HANDLER_SKIP_KEYS}
                     handler = handler_class(**kwargs)
-                    backend.add_sink(handler, level=handler_level, format=fmt)
+                    backend.add_sink(handler, level=handler_level, format=fmt, backtrace=False, diagnose=diagnose)
 
 
 def _mail_configured() -> bool:

@@ -158,6 +158,52 @@ class TestLogModulesConfig:
             assert log.config.log.modules.ignore == ''
 
 
+class TestLogEnableDiagnoseConfig:
+
+    def test_enable_diagnose_default_false(self):
+        """Test enable_diagnose defaults to False."""
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop('CONFIG_LOG_ENABLE_DIAGNOSE', None)
+            import log.config
+            importlib.reload(log.config)
+            assert log.config.log.enable_diagnose is False
+
+    def test_enable_diagnose_true_with_1(self):
+        """Test enable_diagnose is True when set to '1'."""
+        with patch.dict(os.environ, {'CONFIG_LOG_ENABLE_DIAGNOSE': '1'}):
+            import log.config
+            importlib.reload(log.config)
+            assert log.config.log.enable_diagnose is True
+
+    def test_enable_diagnose_true_with_true(self):
+        """Test enable_diagnose is True when set to 'true'."""
+        with patch.dict(os.environ, {'CONFIG_LOG_ENABLE_DIAGNOSE': 'true'}):
+            import log.config
+            importlib.reload(log.config)
+            assert log.config.log.enable_diagnose is True
+
+    def test_enable_diagnose_true_with_yes(self):
+        """Test enable_diagnose is True when set to 'yes'."""
+        with patch.dict(os.environ, {'CONFIG_LOG_ENABLE_DIAGNOSE': 'yes'}):
+            import log.config
+            importlib.reload(log.config)
+            assert log.config.log.enable_diagnose is True
+
+    def test_enable_diagnose_case_insensitive(self):
+        """Test enable_diagnose is case insensitive."""
+        with patch.dict(os.environ, {'CONFIG_LOG_ENABLE_DIAGNOSE': 'TRUE'}):
+            import log.config
+            importlib.reload(log.config)
+            assert log.config.log.enable_diagnose is True
+
+    def test_enable_diagnose_false_with_invalid(self):
+        """Test enable_diagnose is False with invalid value."""
+        with patch.dict(os.environ, {'CONFIG_LOG_ENABLE_DIAGNOSE': 'invalid'}):
+            import log.config
+            importlib.reload(log.config)
+            assert log.config.log.enable_diagnose is False
+
+
 #
 # HERE constant tests
 #
