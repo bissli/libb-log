@@ -1,12 +1,96 @@
 """Tests for log.setup module - loguru-based implementation."""
+import importlib
 import logging
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from log.setup import SetupType, class_logger, configure_logging
 from log.setup import log_exception, patch_webdriver, set_level
+
+
+#
+# Windows colorama initialization tests
+#
+
+
+class TestWindowsColoramaInit:
+    """Test colorama initialization on Windows platform."""
+
+    def test_colorama_initialized_on_windows(self):
+        """Test that colorama.just_fix_windows_console is called on Windows."""
+        mock_colorama = MagicMock()
+
+        with patch.dict(sys.modules, {'colorama': mock_colorama}):
+            with patch.object(sys, 'platform', 'win32'):
+                # Reload module to trigger initialization
+                import log.setup
+                importlib.reload(log.setup)
+
+        mock_colorama.just_fix_windows_console.assert_called_once()
+
+    def test_colorama_not_initialized_on_linux(self):
+        """Test that colorama is not initialized on Linux."""
+        mock_colorama = MagicMock()
+
+        with patch.dict(sys.modules, {'colorama': mock_colorama}):
+            with patch.object(sys, 'platform', 'linux'):
+                import log.setup
+                importlib.reload(log.setup)
+
+        mock_colorama.just_fix_windows_console.assert_not_called()
+
+    def test_colorama_not_initialized_on_darwin(self):
+        """Test that colorama is not initialized on macOS."""
+        mock_colorama = MagicMock()
+
+        with patch.dict(sys.modules, {'colorama': mock_colorama}):
+            with patch.object(sys, 'platform', 'darwin'):
+                import log.setup
+                importlib.reload(log.setup)
+
+        mock_colorama.just_fix_windows_console.assert_not_called()
+
+    def test_missing_colorama_does_not_raise_on_windows(self):
+        """Test graceful handling when colorama is not installed on Windows."""
+        # Remove colorama from modules to simulate ImportError
+        modules_without_colorama = {k: v for k, v in sys.modules.items()
+                                    if not k.startswith('colorama')}
+
+        with patch.dict(sys.modules, modules_without_colorama, clear=True):
+            # Make colorama import raise ImportError
+            import builtins
+            original_import = builtins.__import__
+
+            def mock_import(name, *args, **kwargs):
+                if name == 'colorama':
+                    raise ImportError('No module named colorama')
+                return original_import(name, *args, **kwargs)
+
+            with patch.object(builtins, '__import__', mock_import):
+                with patch.object(sys, 'platform', 'win32'):
+                    import log.setup
+                    # Should not raise - just silently skip colorama init
+                    importlib.reload(log.setup)
+
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=False)
+    def test_console_sink_uses_colorize_none(self, mock_is_tty, mock_get_backend):
+        """Test console sink uses colorize=None for auto-detection."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        configure_logging(setup='cmd', app='testapp')
+
+        # Find console sink call (sys.stderr)
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        console_calls = [c for c in add_sink_calls if c[0][0] == sys.stderr]
+        assert len(console_calls) == 1
+
+        # Verify colorize=None for auto-detection
+        console_kwargs = console_calls[0][1]
+        assert console_kwargs.get('colorize') is None
 
 #
 # set_level tests

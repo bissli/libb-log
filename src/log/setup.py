@@ -31,6 +31,13 @@ try:
 except ImportError:
     MAILCHIMP_ENABLED = False
 
+if sys.platform == 'win32':
+    try:
+        import colorama
+        colorama.just_fix_windows_console()
+    except ImportError:
+        pass
+
 # Keys to skip when parsing extra_handlers config
 _HANDLER_SKIP_KEYS = {'()', 'class', 'level', 'formatter', 'filters'}
 
@@ -241,7 +248,7 @@ def _add_sinks(backend, config: LogConfig) -> None:
             sys.stderr,
             level=console_level,
             format=fmt,
-            colorize=True,
+            colorize=None,
         )
 
     # File sink - if enabled

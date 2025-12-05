@@ -33,10 +33,17 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
+        # Get the formatted message, handling formatting errors gracefully
+        try:
+            msg = record.getMessage()
+        except (TypeError, ValueError):
+            # Formatting failed - fall back to raw message with args appended
+            msg = record.msg
+            if record.args:
+                msg = f'{msg} [args: {record.args!r}]'
+
         # Forward to loguru with proper depth for correct caller info
-        _loguru.bind(logger_name=record.name).opt(
-            depth=depth, exception=record.exc_info
-        ).log(level, record.getMessage())
+        _loguru.bind(logger_name=record.name).opt(depth=depth, exception=record.exc_info).log(level, msg)
 
 
 class LoguruBackend:
@@ -47,8 +54,8 @@ class LoguruBackend:
         self._configure_colors()
 
     def _configure_colors(self) -> None:
-        """Configure custom level colors to match legacy behavior."""
-        # DEBUG: purple/magenta, INFO: green, WARNING: yellow, ERROR/CRITICAL: red
+        """Configure custom level colors to match legacy behavior.
+        """
         _loguru.level('DEBUG', color='<magenta>')
         _loguru.level('INFO', color='<green>')
         _loguru.level('WARNING', color='<yellow>')
