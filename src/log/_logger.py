@@ -58,10 +58,6 @@ class Logger:
         )
 
 
-# Global default logger instance
-_default_logger: Logger | None = None
-
-
 def get_logger(name: str | None = None, **context) -> Logger:
     """Get a logger instance, optionally with a name and context.
 
@@ -80,11 +76,3 @@ def get_logger(name: str | None = None, **context) -> Logger:
         >>> log.info('Processing request')
     """
     return Logger(name=name, **context)
-
-
-def _get_default_logger() -> Logger:
-    """Get the default logger instance (lazy initialization)."""
-    global _default_logger
-    if _default_logger is None:
-        _default_logger = Logger()
-    return _default_logger

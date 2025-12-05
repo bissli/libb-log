@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import datetime
+import importlib
 import logging
 import os
+import socket
 import sys
 from collections.abc import Callable
 from copy import deepcopy
@@ -29,6 +31,12 @@ try:
 except ImportError:
     MAILCHIMP_ENABLED = False
 
+# Keys to skip when parsing extra_handlers config
+_HANDLER_SKIP_KEYS = {'()', 'class', 'level', 'formatter', 'filters'}
+
+# DNS lookup timeout for web patcher (seconds)
+_DNS_TIMEOUT = 1.0
+
 
 __all__ = [
     'configure_logging',
@@ -50,9 +58,10 @@ class SetupType(StrEnum):
 
 
 # Format strings for loguru
-# <level> tags apply the level's color to the level name only
-FMT_JOB = '<level>{level.name:<4}</level> {time:YYYY-MM-DD HH:mm:ss,SSS} {extra[machine]} {name} {line} {message}'
-FMT_WEB = '<level>{level.name:<4}</level> {time:YYYY-MM-DD HH:mm:ss,SSS} {extra[machine]} {name} {line} [{extra[user]} {extra[ip]}] {message}'
+# <level> tags apply the level's color to the entire line
+# {extra[logger_name]} shows the stdlib logger name (e.g., 'cmd', 'web')
+FMT_JOB = '<level>{level.name:<4} {time:YYYY-MM-DD HH:mm:ss,SSS} {extra[machine]} {extra[logger_name]} {line} {message}</level>'
+FMT_WEB = '<level>{level.name:<4} {time:YYYY-MM-DD HH:mm:ss,SSS} {extra[machine]} {extra[logger_name]} {line} [{extra[user]} {extra[ip]}] {message}</level>'
 
 
 @dataclass
@@ -162,8 +171,6 @@ def configure_logging(
 
 def _configure_context(backend, config: LogConfig) -> None:
     """Set up context patchers (machine, preamble, web)."""
-    import socket
-
     patchers = []
 
     # Machine patcher - always add hostname
@@ -182,7 +189,7 @@ def _configure_context(backend, config: LogConfig) -> None:
             record['extra']['cmd_args'] = config.app_args
             record['extra']['cmd_setup'] = config.setup.value
             # Track failure status
-            if record['level'].no >= 40:  # ERROR or above
+            if record['level'].no >= logging.ERROR:
                 preamble_state['status'] = 'failed'
             record['extra']['cmd_status'] = preamble_state['status']
 
@@ -193,19 +200,24 @@ def _configure_context(backend, config: LogConfig) -> None:
         ip_fn = config.web_context.get('ip_fn', lambda: '')
         user_fn = config.web_context.get('user_fn', lambda: '')
 
-        def web_patcher(record):
-            ipaddr = ''
+        def resolve_ip():
             try:
                 ipaddr = ip_fn() or ''
-                if ipaddr:
-                    try:
-                        hostname, _, _ = socket.gethostbyaddr(ipaddr)
-                        ipaddr = hostname
-                    except OSError:
-                        pass
+                if not ipaddr:
+                    return ''
+                old_timeout = socket.getdefaulttimeout()
+                socket.setdefaulttimeout(_DNS_TIMEOUT)
+                try:
+                    return socket.gethostbyaddr(ipaddr)[0]
+                except (TimeoutError, OSError):
+                    return ipaddr
+                finally:
+                    socket.setdefaulttimeout(old_timeout)
             except Exception:
-                pass
-            record['extra']['ip'] = ipaddr
+                return ''
+
+        def web_patcher(record):
+            record['extra']['ip'] = resolve_ip()
             record['extra']['user'] = user_fn() or ''
 
         patchers.append(web_patcher)
@@ -222,11 +234,12 @@ def _add_sinks(backend, config: LogConfig) -> None:
     """Add sinks based on configuration."""
     fmt = FMT_WEB if config.setup == SetupType.WEB else FMT_JOB
 
-    # Console sink - always for cmd, or if TTY
+    # When in TTY, use DEBUG level for interactive debugging
     if config.console or config.setup == SetupType.CMD or is_tty():
+        console_level = 'DEBUG' if is_tty() else config.level
         backend.add_sink(
             sys.stderr,
-            level=config.level,
+            level=console_level,
             format=fmt,
             colorize=True,
         )
@@ -314,13 +327,11 @@ def _add_extra_handlers(backend, config: LogConfig, extra_handlers: dict) -> Non
                 parts = factory.rsplit('.', 1)
                 if len(parts) == 2:
                     module_name, class_name = parts
-                    import importlib
                     module = importlib.import_module(module_name)
                     factory = getattr(module, class_name)
 
             # Get constructor args (exclude config keys)
-            skip_keys = {'()', 'level', 'formatter', 'filters', 'class'}
-            kwargs = {k: v for k, v in handler_conf.items() if k not in skip_keys}
+            kwargs = {k: v for k, v in handler_conf.items() if k not in _HANDLER_SKIP_KEYS}
             handler = factory(**kwargs)
             backend.add_sink(handler, level=handler_level, format=fmt)
 
@@ -331,12 +342,10 @@ def _add_extra_handlers(backend, config: LogConfig, extra_handlers: dict) -> Non
                 parts = class_path.rsplit('.', 1)
                 if len(parts) == 2:
                     module_name, class_name = parts
-                    import importlib
                     module = importlib.import_module(module_name)
                     handler_class = getattr(module, class_name)
 
-                    skip_keys = {'class', 'level', 'formatter', 'filters'}
-                    kwargs = {k: v for k, v in handler_conf.items() if k not in skip_keys}
+                    kwargs = {k: v for k, v in handler_conf.items() if k not in _HANDLER_SKIP_KEYS}
                     handler = handler_class(**kwargs)
                     backend.add_sink(handler, level=handler_level, format=fmt)
 
@@ -439,17 +448,3 @@ def log_exception(logger: Any) -> Callable[[Callable[..., Any]], Callable[..., A
                 raise
         return wrapped_fn
     return wrapper
-
-
-if __name__ == '__main__':
-    configure_logging(SetupType.CMD)
-    logger = logging.getLogger('cmd')
-    logger.debug('Debug')
-    logger.info('Info')
-    logger.warning('Warning')
-    logger.error('Error')
-    logger.critical('Critical')
-    try:
-        1 / 0
-    except Exception as exc:
-        logger.exception(exc)

@@ -320,6 +320,39 @@ class TestConfigureLogging:
         assert len(console_sinks) > 0
 
     @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=True)
+    def test_configure_tty_uses_debug_level(self, mock_is_tty, mock_get_backend):
+        """Test console uses DEBUG level when running in TTY, regardless of preset."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        # Job preset has INFO level, but TTY should override to DEBUG
+        configure_logging(setup='job', app='testapp')
+
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        console_sinks = [c for c in add_sink_calls if c[0][0] == sys.stderr]
+        assert len(console_sinks) == 1
+        console_call = console_sinks[0]
+        assert console_call[1]['level'] == 'DEBUG'
+
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=False)
+    def test_configure_non_tty_uses_preset_level(self, mock_is_tty, mock_get_backend):
+        """Test console uses preset level when not in TTY."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        # CMD preset has console=True with DEBUG level
+        configure_logging(setup='cmd', app='testapp')
+
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        console_sinks = [c for c in add_sink_calls if c[0][0] == sys.stderr]
+        assert len(console_sinks) == 1
+        console_call = console_sinks[0]
+        # CMD preset level is DEBUG
+        assert console_call[1]['level'] == 'DEBUG'
+
+    @patch('log.setup.get_backend')
     @patch('log.setup.is_tty', return_value=False)
     def test_configure_with_level_override(self, mock_is_tty, mock_get_backend):
         """Test configure_logging applies level override."""
