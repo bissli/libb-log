@@ -29,5 +29,6 @@ if os.getenv('CONFIG_TLSSYSLOG_DIR'):
 log = Setting()
 log.modules.extra = os.getenv('CONFIG_LOG_MODULES_EXTRA', '')
 log.modules.ignore = os.getenv('CONFIG_LOG_MODULES_IGNORE', '')
+log.enable_diagnose = os.getenv('CONFIG_LOG_ENABLE_DIAGNOSE', '').lower() in {'1', 'true', 'yes'}
 
 Setting.lock()
