@@ -273,16 +273,18 @@ def _add_sinks(backend, config: LogConfig) -> None:
         )
 
     # Mail sink - if enabled and configured
-    if config.mail and _mail_configured():
-        from log.sinks import ScreenshotMandrillSink
-        sink = ScreenshotMandrillSink(
-            apikey=config_mail.mandrill.apikey,
-            fromaddr=config_mail.mail.fromemail,
-            toaddrs=config_mail.mail.toemail,
-            subject_template='{extra[machine]} {name} {level.name}',
-        )
-        _screenshot_sinks.append(sink)
-        backend.add_sink(sink, level='ERROR', format=fmt, backtrace=False, diagnose=diagnose)
+    if config.mail:
+        if _mail_configured():
+            from log.sinks import ScreenshotMandrillSink
+            sink = ScreenshotMandrillSink(
+                apikey=config_mail.mandrill.apikey,
+                fromaddr=config_mail.mail.fromemail,
+                toaddrs=config_mail.mail.toemail,
+                subject_template='{extra[machine]} {name} {level.name}')
+            _screenshot_sinks.append(sink)
+            backend.add_sink(sink, level='ERROR', format=fmt, backtrace=False, diagnose=diagnose)
+        else:
+            _log_mail_config_status()
 
     # Syslog sink - if enabled and configured
     if config.syslog and _syslog_configured():
@@ -370,6 +372,20 @@ def _mail_configured() -> bool:
         and MAILCHIMP_ENABLED
         and bool(os.getenv('CONFIG_MANDRILL_APIKEY'))
     )
+
+
+def _log_mail_config_status() -> None:
+    """Log warnings about why mail is not configured."""
+    import warnings
+    reasons = []
+    if not MAIL_CONFIG_AVAILABLE:
+        reasons.append('mail config module not available')
+    if not MAILCHIMP_ENABLED:
+        reasons.append('mailchimp_transactional not installed')
+    if not os.getenv('CONFIG_MANDRILL_APIKEY'):
+        reasons.append('CONFIG_MANDRILL_APIKEY not set')
+    if reasons:
+        warnings.warn(f"Email notifications disabled: {'; '.join(reasons)}", stacklevel=2)
 
 
 def _syslog_configured() -> bool:

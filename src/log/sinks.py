@@ -6,6 +6,7 @@ These replace the old logging.Handler subclasses with simpler callables.
 from __future__ import annotations
 
 import base64
+import functools
 import logging
 import smtplib
 import urllib.request
@@ -51,6 +52,28 @@ __all__ = [
 ]
 
 
+def warn_once_if_none(attr_name: str, warning_msg: str):
+    """Decorator that warns once and returns early if an attribute is None.
+
+    Use on __call__ methods to guard against missing dependencies/clients.
+    The warning is only logged once per decorated function (shared across instances).
+    """
+    def decorator(func):
+        warned = False
+
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            nonlocal warned
+            if getattr(self, attr_name) is None:
+                if not warned:
+                    _loguru.opt(depth=2).warning(warning_msg)
+                    warned = True
+                return None
+            return func(self, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
 def _choose_color_html(level_name: str) -> str:
     """Choose HTML color based on log level name."""
     level_colors = {
@@ -79,22 +102,27 @@ class MandrillSink:
         self.api = None
         if HAS_MAILCHIMP:
             self.api = MailchimpTransactional.Client(apikey)
+        else:
+            _loguru.warning('MandrillSink: mailchimp_transactional not installed, emails disabled')
         self.fromaddr = fromaddr
         if isinstance(toaddrs, str):
             toaddrs = [toaddrs]
         self.toaddrs = [{'email': email} for email in toaddrs]
         self.subject_template = subject_template
 
+    @warn_once_if_none('api', 'MandrillSink: no API client, email not sent')
     def __call__(self, message: Message) -> None:
-        if self.api is None:
-            return
         record = message.record
         text = str(message)
         color = _choose_color_html(record['level'].name)
         html = f'<pre style="color:{color};">{text}</pre>'
 
         # Format subject from template
-        subject = self.subject_template.format(**record)
+        try:
+            subject = self.subject_template.format(**record)
+        except KeyError as e:
+            _loguru.opt(depth=1).warning(f'MandrillSink: subject format failed, missing key {e}')
+            subject = f"{record.get('name', 'log')} {record['level'].name}"
 
         msg = {
             'from_email': self.fromaddr,
@@ -124,7 +152,10 @@ class ScreenshotMandrillSink(MandrillSink):
         self.webdriver = webdriver
 
     def __call__(self, message: Message) -> None:
-        if self.webdriver is None or self.api is None:
+        if self.webdriver is None:
+            return super().__call__(message)
+        if self.api is None:
+            # Parent will log the warning
             return super().__call__(message)
 
         record = message.record
@@ -150,7 +181,12 @@ class ScreenshotMandrillSink(MandrillSink):
                 'type': 'text/plain',
             }
 
-            subject = self.subject_template.format(**record)
+            try:
+                subject = self.subject_template.format(**record)
+            except KeyError as e:
+                _loguru.opt(depth=1).warning(f'ScreenshotMandrillSink: subject format failed, missing key {e}')
+                subject = f"{record.get('name', 'log')} {record['level'].name}"
+
             msg = {
                 'from_email': self.fromaddr,
                 'to': self.toaddrs,
@@ -197,8 +233,14 @@ class SMTPSink:
         color = _choose_color_html(record['level'].name)
         html = f'<html><body><pre style="color:{color};">{text}</pre></body></html>'
 
+        try:
+            subject = self.subject_template.format(**record)
+        except KeyError as e:
+            _loguru.opt(depth=1).warning(f'SMTPSink: subject format failed, missing key {e}')
+            subject = f"{record.get('name', 'log')} {record['level'].name}"
+
         msg = MIMEMultipart('alternative')
-        msg['Subject'] = self.subject_template.format(**record)
+        msg['Subject'] = subject
         msg['From'] = self.fromaddr
         msg['To'] = ','.join(self.toaddrs)
         msg['Date'] = formatdate()
@@ -246,8 +288,14 @@ class ScreenshotSMTPSink(SMTPSink):
             link = f'<div><a href="{url}">{url}</a></div>'
             html = f'<html><body><pre style="color:{color};">{text}</pre>{link}<img src="cid:screenshot.png"/></body></html>'
 
+            try:
+                subject = self.subject_template.format(**record)
+            except KeyError as e:
+                _loguru.opt(depth=1).warning(f'ScreenshotSMTPSink: subject format failed, missing key {e}')
+                subject = f"{record.get('name', 'log')} {record['level'].name}"
+
             msg = MIMEMultipart()
-            msg['Subject'] = self.subject_template.format(**record)
+            msg['Subject'] = subject
             msg['From'] = self.fromaddr
             msg['To'] = ','.join(self.toaddrs)
             msg['Date'] = formatdate()
@@ -299,10 +347,11 @@ class SNSSink:
                 self.client = boto3.client('sns', region_name=region)
             except Exception as e:
                 _loguru.opt(depth=1).warning(f'SNSSink init failed: {e}')
+        else:
+            _loguru.warning('SNSSink: boto3 not installed, SNS notifications disabled')
 
+    @warn_once_if_none('client', 'SNSSink: no client, notification not sent')
     def __call__(self, message: Message) -> None:
-        if self.client is None:
-            return
         record = message.record
         try:
             subject = f"{record.get('name', '')}:{record['level'].name}"[:99]
