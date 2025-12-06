@@ -41,6 +41,12 @@ if sys.platform == 'win32':
 # Keys to skip when parsing extra_handlers config
 _HANDLER_SKIP_KEYS = {'()', 'class', 'level', 'formatter', 'filters'}
 
+# All sink attributes in LogConfig
+_SINK_ATTRS = ('console', 'file', 'mail', 'syslog', 'tlssyslog', 'sns')
+
+# Sinks allowed in TTY mode (interactive debugging)
+_TTY_SINKS = {'console', 'file'}
+
 # DNS lookup timeout for web patcher (seconds)
 _DNS_TIMEOUT = 1.0
 
@@ -241,6 +247,12 @@ def _add_sinks(backend, config: LogConfig) -> None:
     """Add sinks based on configuration."""
     fmt = FMT_WEB if config.setup == SetupType.WEB else FMT_JOB
     diagnose = config_log.log.enable_diagnose
+
+    # TTY mode: disable all sinks except those explicitly allowed
+    if is_tty():
+        for sink in _SINK_ATTRS:
+            if sink not in _TTY_SINKS:
+                setattr(config, sink, False)
 
     # When in TTY, use DEBUG level for interactive debugging
     if config.console or config.setup == SetupType.CMD or is_tty():
