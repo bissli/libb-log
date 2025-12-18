@@ -662,5 +662,112 @@ class TestExtraHandlers:
         assert handler_added
 
 
+class TestTTYSinkDisabling:
+    """Test that remote sinks are disabled in TTY mode."""
+
+    @patch('log.setup._mail_configured', return_value=True)
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=True)
+    def test_tty_disables_mail_sink(self, mock_is_tty, mock_get_backend, mock_mail_configured):
+        """Test mail sink is disabled when running in TTY mode."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        # JOB preset has mail=True, but TTY mode should disable it
+        configure_logging(setup='job', app='testapp')
+
+        # Mail sink should NOT be added despite preset having mail=True
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        from log.sinks import ScreenshotMandrillSink
+        mail_sinks = [c for c in add_sink_calls
+                      if isinstance(c[0][0], ScreenshotMandrillSink)]
+        assert len(mail_sinks) == 0
+
+    @patch('log.setup._syslog_configured', return_value=True)
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=True)
+    def test_tty_disables_syslog_sink(self, mock_is_tty, mock_get_backend, mock_syslog_configured):
+        """Test syslog sink is disabled when running in TTY mode."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        # JOB preset has syslog=True, but TTY mode should disable it
+        configure_logging(setup='job', app='testapp')
+
+        # Syslog sink should NOT be added
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        from log.sinks import SyslogSink
+        syslog_sinks = [c for c in add_sink_calls
+                        if isinstance(c[0][0], SyslogSink)]
+        assert len(syslog_sinks) == 0
+
+    @patch('log.setup._tlssyslog_configured', return_value=True)
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=True)
+    def test_tty_disables_tlssyslog_sink(self, mock_is_tty, mock_get_backend, mock_tlssyslog_configured):
+        """Test TLS syslog sink is disabled when running in TTY mode."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        # JOB preset has tlssyslog=True, but TTY mode should disable it
+        configure_logging(setup='job', app='testapp')
+
+        # TLS syslog sink should NOT be added
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        from log.sinks import TLSSyslogSink
+        tlssyslog_sinks = [c for c in add_sink_calls
+                          if isinstance(c[0][0], TLSSyslogSink)]
+        assert len(tlssyslog_sinks) == 0
+
+    @patch('log.setup._sns_configured', return_value=True)
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=True)
+    def test_tty_disables_sns_sink(self, mock_is_tty, mock_get_backend, mock_sns_configured):
+        """Test SNS sink is disabled when running in TTY mode."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        # JOB preset has sns=True, but TTY mode should disable it
+        configure_logging(setup='job', app='testapp')
+
+        # SNS sink should NOT be added
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        from log.sinks import SNSSink
+        sns_sinks = [c for c in add_sink_calls
+                     if isinstance(c[0][0], SNSSink)]
+        assert len(sns_sinks) == 0
+
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=True)
+    def test_tty_allows_console_sink(self, mock_is_tty, mock_get_backend):
+        """Test console sink is still allowed in TTY mode."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        # TTY mode should add console sink automatically
+        configure_logging(setup='job', app='testapp')
+
+        # Console sink should be added
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        console_sinks = [c for c in add_sink_calls if c[0][0] == sys.stderr]
+        assert len(console_sinks) > 0
+
+    @patch('log.setup.get_backend')
+    @patch('log.setup.is_tty', return_value=True)
+    def test_tty_allows_file_sink(self, mock_is_tty, mock_get_backend):
+        """Test file sink is still allowed in TTY mode."""
+        mock_backend = MagicMock()
+        mock_get_backend.return_value = mock_backend
+
+        # JOB preset has file=True, and TTY mode allows file sinks
+        configure_logging(setup='job', app='testapp')
+
+        # File sink should be added (sink path contains .log)
+        add_sink_calls = mock_backend.add_sink.call_args_list
+        file_sinks = [c for c in add_sink_calls
+                      if isinstance(c[0][0], str) and c[0][0].endswith('.log')]
+        assert len(file_sinks) > 0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
