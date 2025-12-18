@@ -1,13 +1,12 @@
 import os
 from pathlib import Path
 
-from libb import Setting, expandabspath, get_tempdir, is_tty
+from libb import Setting, expandabspath, get_tempdir
 
 Setting.unlock()
 
 # Environment
 HERE = Path(Path(__file__).parent).resolve()
-CHECKTTY = is_tty()
 
 # Tmpdir
 tmpdir = get_tempdir()
