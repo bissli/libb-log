@@ -10,7 +10,58 @@ from typing import Any
 
 from loguru import logger as _loguru
 
+from log import config as config_log
+
 __all__ = ['get_backend', 'add_sink', 'remove_sink', 'complete', 'intercept_stdlib']
+
+# Cache parsed allowed modules list at module level
+_allowed_modules: set[str] | None = None
+
+# Base modules always allowed
+_BASE_MODULES = {'cmd', 'job', 'web', 'twd', 'srp', 'log'}
+
+
+def _get_allowed_modules() -> set[str]:
+    """Parse and cache allowed modules list (whitelist).
+    """
+    global _allowed_modules
+    if _allowed_modules is None:
+        extra_str = config_log.log.modules.extra or ''
+        extra = {m.strip() for m in extra_str.split(',') if m.strip()}
+        _allowed_modules = _BASE_MODULES | extra
+    return _allowed_modules
+
+
+def _reset_module_cache() -> None:
+    """Reset module filter cache. For testing only.
+    """
+    global _allowed_modules
+    _allowed_modules = None
+
+
+def _module_filter(record: dict) -> bool:
+    """Whitelist filter - allow configured modules, always allow errors.
+    """
+    # Always allow ERROR and above (level.no >= 40)
+    if record['level'].no >= 40:
+        return True
+
+    allowed = _get_allowed_modules()
+
+    # Check module name (for direct loguru calls)
+    name = record.get('name', '')
+    for prefix in allowed:
+        if name == prefix or name.startswith(prefix + '.'):
+            return True
+
+    # Check bound logger_name (for intercepted stdlib logs)
+    logger_name = record.get('extra', {}).get('logger_name', '')
+    if logger_name:
+        for prefix in allowed:
+            if logger_name == prefix or logger_name.startswith(prefix + '.'):
+                return True
+
+    return False
 
 
 class InterceptHandler(logging.Handler):
@@ -93,7 +144,16 @@ class LoguruBackend:
         bound.opt(**opt_kwargs).log(level, msg, *args, **kwargs)
 
     def add_sink(self, sink: Any, **kwargs) -> int:
-        """Add a sink and return its ID."""
+        """Add a sink and return its ID.
+        """
+        user_filter = kwargs.get('filter')
+        if user_filter is None:
+            kwargs['filter'] = _module_filter
+        elif callable(user_filter):
+            def composed(record):
+                return _module_filter(record) and user_filter(record)
+            kwargs['filter'] = composed
+
         sink_id = _loguru.add(sink, **kwargs)
         self._sink_ids.append(sink_id)
         return sink_id
