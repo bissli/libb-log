@@ -191,6 +191,7 @@ def _configure_context(backend, config: LogConfig) -> None:
 
     def machine_patcher(record):
         record['extra']['machine'] = hostname
+        record['extra'].setdefault('logger_name', record.get('name', ''))
     patchers.append(machine_patcher)
 
     # Preamble patcher - for job/srp/twd setups

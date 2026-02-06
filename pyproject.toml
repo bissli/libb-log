@@ -31,11 +31,11 @@ wrapt = { version = "*", optional = true }
 [tool.poetry.extras]
 test = [
   "asserts",
-  "wrapt",
   "docker",
   "pytest",
   "pytest-mock",
   "pytest-runner",
+  "wrapt",
 ]
 
 [build-system]
