@@ -2,13 +2,13 @@
 import importlib
 import logging
 import sys
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from log.setup import SetupType, class_logger, configure_logging
-from log.setup import log_exception, patch_webdriver, set_level
-
+from log.setup import log_exception, patch_playwright, patch_webdriver
+from log.setup import set_level
 
 #
 # Windows colorama initialization tests
@@ -71,6 +71,7 @@ class TestWindowsColoramaInit:
             with patch.object(builtins, '__import__', mock_import):
                 with patch.object(sys, 'platform', 'win32'):
                     import log.setup
+
                     # Should not raise - just silently skip colorama init
                     importlib.reload(log.setup)
 
@@ -197,6 +198,82 @@ class TestPatchWebdriver:
 
         # Should not raise
         patch_webdriver(mock_logger, mock_webdriver)
+
+
+#
+# patch_playwright tests
+#
+
+
+class TestPatchPlaywright:
+
+    def test_patches_screenshot_sinks_with_adapter(self):
+        """Verify patch_playwright wraps browser in adapter and patches sinks."""
+        from log import setup
+        from log.sinks import PlaywrightScreenshotAdapter
+        from log.sinks import ScreenshotMandrillSink
+
+        mock_browser = MagicMock()
+        mock_logger = MagicMock()
+        mock_sink = MagicMock(spec=ScreenshotMandrillSink)
+
+        setup._screenshot_sinks.append(mock_sink)
+        try:
+            patch_playwright(mock_logger, mock_browser)
+            mock_sink.set_webdriver.assert_called_once()
+            adapter = mock_sink.set_webdriver.call_args[0][0]
+            assert isinstance(adapter, PlaywrightScreenshotAdapter)
+        finally:
+            setup._screenshot_sinks.clear()
+
+    def test_clears_sinks_when_browser_is_none(self):
+        """Verify patch_playwright(logger, None) sets webdriver to None."""
+        from log import setup
+        from log.sinks import ScreenshotMandrillSink
+
+        mock_logger = MagicMock()
+        mock_sink = MagicMock(spec=ScreenshotMandrillSink)
+
+        setup._screenshot_sinks.append(mock_sink)
+        try:
+            patch_playwright(mock_logger, None)
+            mock_sink.set_webdriver.assert_called_once_with(None)
+        finally:
+            setup._screenshot_sinks.clear()
+
+    def test_adapter_delegates_current_url(self):
+        """Verify adapter.current_url delegates to browser.page.url."""
+        from log.sinks import PlaywrightScreenshotAdapter
+
+        mock_browser = MagicMock()
+        mock_browser.page.url = 'https://example.com'
+
+        adapter = PlaywrightScreenshotAdapter(mock_browser)
+        assert adapter.current_url == 'https://example.com'
+
+    def test_adapter_delegates_get_screenshot_as_base64(self):
+        """Verify adapter.get_screenshot_as_base64() returns base64 screenshot."""
+        from log.sinks import PlaywrightScreenshotAdapter
+
+        mock_browser = MagicMock()
+        mock_browser.page.screenshot.return_value = b'\x89PNG'
+
+        adapter = PlaywrightScreenshotAdapter(mock_browser)
+        result = adapter.get_screenshot_as_base64()
+
+        import base64
+        assert result == base64.b64encode(b'\x89PNG').decode('ascii')
+        mock_browser.page.screenshot.assert_called_once()
+
+    def test_adapter_delegates_page_source(self):
+        """Verify adapter.page_source delegates to browser.page.content()."""
+        from log.sinks import PlaywrightScreenshotAdapter
+
+        mock_browser = MagicMock()
+        mock_browser.page.content.return_value = '<html></html>'
+
+        adapter = PlaywrightScreenshotAdapter(mock_browser)
+        assert adapter.page_source == '<html></html>'
 
 
 #
@@ -716,7 +793,7 @@ class TestTTYSinkDisabling:
         add_sink_calls = mock_backend.add_sink.call_args_list
         from log.sinks import TLSSyslogSink
         tlssyslog_sinks = [c for c in add_sink_calls
-                          if isinstance(c[0][0], TLSSyslogSink)]
+                           if isinstance(c[0][0], TLSSyslogSink)]
         assert len(tlssyslog_sinks) == 0
 
     @patch('log.setup._sns_configured', return_value=True)

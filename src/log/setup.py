@@ -54,6 +54,7 @@ _DNS_TIMEOUT = 1.0
 __all__ = [
     'configure_logging',
     'log_exception',
+    'patch_playwright',
     'patch_webdriver',
     'class_logger',
     'set_level',
@@ -452,6 +453,29 @@ def patch_webdriver(this_logger: Any, this_webdriver: Any) -> None:
         for h in this_logger.handlers:
             if hasattr(h, 'webdriver'):
                 h.webdriver = this_webdriver
+
+
+def patch_playwright(this_logger: Any, this_browser: Any) -> None:
+    """Patch screenshot sinks with Playwright browser instance.
+
+    Wraps the browser in an adapter that provides the Selenium-compatible
+    interface (current_url, get_screenshot_as_base64, page_source).
+    """
+    from log.sinks import PlaywrightScreenshotAdapter
+
+    if this_browser is not None:
+        adapter = PlaywrightScreenshotAdapter(this_browser)
+    else:
+        adapter = None
+
+    for sink in _screenshot_sinks:
+        if hasattr(sink, 'set_webdriver'):
+            sink.set_webdriver(adapter)
+
+    if hasattr(this_logger, 'handlers'):
+        for h in this_logger.handlers:
+            if hasattr(h, 'webdriver'):
+                h.webdriver = adapter
 
 
 _logged_classes: set[type] = set()
