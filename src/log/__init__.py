@@ -28,7 +28,8 @@ from log._backend import add_sink, complete, remove_sink
 from log._logger import Logger, get_logger
 from log.loggers import StderrStreamLogger
 from log.setup import SetupType, class_logger, configure_logging
-from log.setup import log_exception, patch_webdriver, set_level
+from log.setup import log_exception, patch_playwright, patch_webdriver
+from log.setup import set_level
 
 # Module-level logger instance
 _module_logger: Logger | None = None
@@ -101,6 +102,7 @@ __all__ = [
     'complete',
     # Utilities
     'StderrStreamLogger',
+    'patch_playwright',
     'patch_webdriver',
     'class_logger',
     'log_exception',

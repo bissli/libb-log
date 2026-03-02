@@ -42,6 +42,7 @@ except ImportError:
 
 __all__ = [
     'MandrillSink',
+    'PlaywrightScreenshotAdapter',
     'ScreenshotMandrillSink',
     'SMTPSink',
     'ScreenshotSMTPSink',
@@ -50,6 +51,32 @@ __all__ = [
     'TLSSyslogSink',
     'URLSink',
 ]
+
+
+class PlaywrightScreenshotAdapter:
+    """Adapter giving Playwright browser a Selenium-compatible screenshot interface.
+    """
+
+    def __init__(self, browser) -> None:
+        self._browser = browser
+
+    @property
+    def current_url(self) -> str:
+        """Return the current page URL.
+        """
+        return self._browser.page.url
+
+    def get_screenshot_as_base64(self) -> str:
+        """Capture screenshot and return as base64 string.
+        """
+        screenshot_bytes = self._browser.page.screenshot()
+        return base64.b64encode(screenshot_bytes).decode('ascii')
+
+    @property
+    def page_source(self) -> str:
+        """Return the current page HTML content.
+        """
+        return self._browser.page.content()
 
 
 def warn_once_if_none(attr_name: str, warning_msg: str):
