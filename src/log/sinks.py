@@ -113,6 +113,17 @@ def _choose_color_html(level_name: str) -> str:
     return level_colors.get(level_name, '#000')
 
 
+def _format_subject(record: dict, template: str, sink_name: str) -> str:
+    """Format email subject from template with fallback.
+    """
+    try:
+        return template.format(**record)
+    except KeyError as e:
+        _loguru.opt(depth=2).warning(
+            f'{sink_name}: subject format failed, missing key {e}')
+        return f"{record.get('name', 'log')} {record['level'].name}"
+
+
 class MandrillSink:
     """Email sink via Mandrill API.
 
@@ -144,12 +155,7 @@ class MandrillSink:
         color = _choose_color_html(record['level'].name)
         html = f'<pre style="color:{color};">{text}</pre>'
 
-        # Format subject from template
-        try:
-            subject = self.subject_template.format(**record)
-        except KeyError as e:
-            _loguru.opt(depth=1).warning(f'MandrillSink: subject format failed, missing key {e}')
-            subject = f"{record.get('name', 'log')} {record['level'].name}"
+        subject = _format_subject(record, self.subject_template, 'MandrillSink')
 
         msg = {
             'from_email': self.fromaddr,
@@ -208,11 +214,7 @@ class ScreenshotMandrillSink(MandrillSink):
                 'type': 'text/plain',
             }
 
-            try:
-                subject = self.subject_template.format(**record)
-            except KeyError as e:
-                _loguru.opt(depth=1).warning(f'ScreenshotMandrillSink: subject format failed, missing key {e}')
-                subject = f"{record.get('name', 'log')} {record['level'].name}"
+            subject = _format_subject(record, self.subject_template, 'ScreenshotMandrillSink')
 
             msg = {
                 'from_email': self.fromaddr,
@@ -254,17 +256,29 @@ class SMTPSink:
         self.ssl = ssl
         self.starttls = starttls
 
+    def _send(self, msg: MIMEMultipart) -> None:
+        """Send a MIME message via SMTP.
+        """
+        if self.ssl:
+            smtp = smtplib.SMTP_SSL(self.mailhost, self.port)
+        else:
+            smtp = smtplib.SMTP(self.mailhost, self.port)
+        if self.starttls:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
+        if self.username:
+            smtp.login(self.username, self.password)
+        smtp.sendmail(self.fromaddr, self.toaddrs, msg.as_string())
+        smtp.quit()
+
     def __call__(self, message: Message) -> None:
         record = message.record
         text = str(message)
         color = _choose_color_html(record['level'].name)
         html = f'<html><body><pre style="color:{color};">{text}</pre></body></html>'
 
-        try:
-            subject = self.subject_template.format(**record)
-        except KeyError as e:
-            _loguru.opt(depth=1).warning(f'SMTPSink: subject format failed, missing key {e}')
-            subject = f"{record.get('name', 'log')} {record['level'].name}"
+        subject = _format_subject(record, self.subject_template, 'SMTPSink')
 
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
@@ -275,18 +289,7 @@ class SMTPSink:
         msg.attach(MIMEText(html, 'html'))
 
         try:
-            if self.ssl:
-                smtp = smtplib.SMTP_SSL(self.mailhost, self.port)
-            else:
-                smtp = smtplib.SMTP(self.mailhost, self.port)
-            if self.starttls:
-                smtp.ehlo()
-                smtp.starttls()
-                smtp.ehlo()
-            if self.username:
-                smtp.login(self.username, self.password)
-            smtp.sendmail(self.fromaddr, self.toaddrs, msg.as_string())
-            smtp.quit()
+            self._send(msg)
         except Exception as e:
             _loguru.opt(depth=1).warning(f'SMTPSink failed: {e}')
 
@@ -315,11 +318,7 @@ class ScreenshotSMTPSink(SMTPSink):
             link = f'<div><a href="{url}">{url}</a></div>'
             html = f'<html><body><pre style="color:{color};">{text}</pre>{link}<img src="cid:screenshot.png"/></body></html>'
 
-            try:
-                subject = self.subject_template.format(**record)
-            except KeyError as e:
-                _loguru.opt(depth=1).warning(f'ScreenshotSMTPSink: subject format failed, missing key {e}')
-                subject = f"{record.get('name', 'log')} {record['level'].name}"
+            subject = _format_subject(record, self.subject_template, 'ScreenshotSMTPSink')
 
             msg = MIMEMultipart()
             msg['Subject'] = subject
@@ -330,8 +329,9 @@ class ScreenshotSMTPSink(SMTPSink):
             msg.attach(MIMEText(html, 'html'))
 
             # Screenshot attachment
+            screenshot_bytes = base64.b64decode(self.webdriver.get_screenshot_as_base64())
             img = MIMEBase('image', 'png')
-            img.set_payload(base64.b64decode(self.webdriver.get_screenshot_as_base64()))
+            img.set_payload(screenshot_bytes)
             encoders.encode_base64(img)
             img.add_header('Content-ID', 'screenshot.png')
             img.add_header('Content-Disposition', 'attachment', filename='screenshot.png')
@@ -345,18 +345,7 @@ class ScreenshotSMTPSink(SMTPSink):
             src.add_header('Content-Disposition', 'attachment', filename='page_source.txt')
             msg.attach(src)
 
-            if self.ssl:
-                smtp = smtplib.SMTP_SSL(self.mailhost, self.port)
-            else:
-                smtp = smtplib.SMTP(self.mailhost, self.port)
-            if self.starttls:
-                smtp.ehlo()
-                smtp.starttls()
-                smtp.ehlo()
-            if self.username:
-                smtp.login(self.username, self.password)
-            smtp.sendmail(self.fromaddr, self.toaddrs, msg.as_string())
-            smtp.quit()
+            self._send(msg)
         except Exception as e:
             _loguru.opt(depth=1).warning(f'ScreenshotSMTPSink failed: {e}')
             super().__call__(message)
