@@ -25,14 +25,7 @@ if TYPE_CHECKING:
     from loguru import Message
 
 # Optional dependency flags
-HAS_BOTO3 = False
 HAS_MAILCHIMP = False
-
-try:
-    import boto3
-    HAS_BOTO3 = True
-except ImportError:
-    pass
 
 try:
     import mailchimp_transactional as MailchimpTransactional
@@ -357,14 +350,16 @@ class SNSSink:
     def __init__(self, topic_arn: str):
         self.topic_arn = topic_arn
         self.client = None
-        if HAS_BOTO3:
-            try:
-                region = topic_arn.split(':')[3]
-                self.client = boto3.client('sns', region_name=region)
-            except Exception as e:
-                _loguru.opt(depth=1).warning(f'SNSSink init failed: {e}')
-        else:
+        try:
+            import boto3
+        except ImportError:
             _loguru.warning('SNSSink: boto3 not installed, SNS notifications disabled')
+            return
+        try:
+            region = topic_arn.split(':')[3]
+            self.client = boto3.client('sns', region_name=region)
+        except Exception as e:
+            _loguru.opt(depth=1).warning(f'SNSSink init failed: {e}')
 
     @warn_once_if_none('client', 'SNSSink: no client, notification not sent')
     def __call__(self, message: Message) -> None:
