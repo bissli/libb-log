@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "log", from = "src" }]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 
 loguru = "^0.7"
 tls-syslog = "0.2.0"
